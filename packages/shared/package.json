@@ -1,0 +1,24 @@
+{
+  "name": "@pyrce/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pyrce High shared types, opcodes, and content schemas",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./src/*": "./src/*"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

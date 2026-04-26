@@ -1,0 +1,23 @@
+{
+  "name": "@pyrce/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pyrce High browser client (Phaser 4 + Vite + Nakama)",
+  "scripts": {
+    "dev": "vite --config vite/config.dev.mjs",
+    "build": "vite build --config vite/config.prod.mjs",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview --config vite/config.prod.mjs"
+  },
+  "dependencies": {
+    "@heroiclabs/nakama-js": "^2.8.0",
+    "@pyrce/shared": "workspace:*",
+    "phaser": "4.0.0"
+  },
+  "devDependencies": {
+    "terser": "^5.39.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.3.1"
+  }
+}

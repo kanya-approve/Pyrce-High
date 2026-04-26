@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: lint + typecheck + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint (biome)
+        run: pnpm lint
+
+      - name: Build shared
+        run: pnpm -F @pyrce/shared build
+
+      - name: Typecheck all packages
+        run: pnpm typecheck
+
+      - name: Build server bundle
+        run: pnpm -F @pyrce/server build
+
+      - name: Build client
+        run: pnpm -F @pyrce/client build
+
+      - name: Verify server bundle is single file
+        run: |
+          test -f packages/server/dist/index.js
+          ls -la packages/server/dist/
+
+      - name: Upload server bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-bundle
+          path: packages/server/dist/index.js
+          retention-days: 7
