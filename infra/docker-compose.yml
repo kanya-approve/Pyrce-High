@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: docker.io/library/postgres:16-alpine
+    image: docker.io/library/postgres:17-alpine
     container_name: pyrce-postgres
     environment:
       POSTGRES_DB: nakama
@@ -17,7 +17,7 @@ services:
       - '5432:5432'
 
   nakama:
-    image: docker.io/heroiclabs/nakama:3.27.0
+    image: docker.io/heroiclabs/nakama:3.38.0
     container_name: pyrce-nakama
     depends_on:
       postgres:

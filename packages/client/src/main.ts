@@ -1,4 +1,5 @@
 import StartGame from './game/main';
+import { NakamaMatchClient } from './net/matchClient';
 import { connectAnonymous } from './net/nakamaClient';
 
 const NAKAMA_CONFIG = {
@@ -9,15 +10,16 @@ const NAKAMA_CONFIG = {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  StartGame('game-container');
+  const game = StartGame('game-container');
 
   connectAnonymous(NAKAMA_CONFIG)
     .then((conn) => {
-      // M0 demo signal: a clean connect prints to the console.
+      const matchClient = new NakamaMatchClient(conn.client, conn.socket, conn.session);
+      game.registry.set('match', matchClient);
       console.log(
         `[pyrce] connected: userId=${conn.userId} username=${conn.username} protocol=${conn.protocolVersion}`,
       );
-      window.dispatchEvent(new CustomEvent('pyrce:connected', { detail: conn }));
+      window.dispatchEvent(new CustomEvent('pyrce:connected', { detail: matchClient }));
     })
     .catch((err: unknown) => {
       console.error('[pyrce] failed to connect to nakama', err);

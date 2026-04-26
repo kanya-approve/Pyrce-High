@@ -1,4 +1,4 @@
-import { Client, type Session } from '@heroiclabs/nakama-js';
+import { Client, Session, type Socket } from '@heroiclabs/nakama-js';
 import { WIRE_PROTOCOL_VERSION } from '@pyrce/shared';
 
 const STORAGE_DEVICE_ID = 'pyrce.deviceId';
@@ -14,18 +14,12 @@ function getOrCreateDeviceId(): string {
   return id;
 }
 
-function loadStoredSession(client: Client): Session | null {
+function loadStoredSession(): Session | null {
   const token = localStorage.getItem(STORAGE_TOKEN);
   const refresh = localStorage.getItem(STORAGE_REFRESH);
   if (!token || !refresh) return null;
   try {
-    const restored =
-      client.constructor.prototype.constructor === Client
-        ? (
-            Client as unknown as { Session: { restore(t: string, r: string): Session } }
-          ).Session.restore(token, refresh)
-        : null;
-    return restored;
+    return Session.restore(token, refresh);
   } catch {
     return null;
   }
@@ -47,29 +41,43 @@ export interface NakamaConfig {
 
 export interface ConnectedSession {
   client: Client;
+  socket: Socket;
   session: Session;
   userId: string;
   username: string;
   protocolVersion: string;
 }
 
+/**
+ * Authenticate (anonymous device auth, persists across reloads), then open a
+ * realtime socket. Resolves once the socket is connected.
+ */
 export async function connectAnonymous(cfg: NakamaConfig): Promise<ConnectedSession> {
   const client = new Client(cfg.serverKey, cfg.host, String(cfg.port), cfg.useSSL);
 
-  let session = loadStoredSession(client);
-  if (session && !session.isexpired(Date.now() / 1000)) {
-    // Session still valid — refresh in background if close to expiry, but use as-is now.
-  } else {
+  let session = loadStoredSession();
+  const nowSec = Date.now() / 1000;
+  if (!session || session.isexpired(nowSec)) {
     const deviceId = getOrCreateDeviceId();
     session = await client.authenticateDevice(deviceId, true);
-    persistSession(session);
   }
+  persistSession(session);
+
+  const socket = client.createSocket(cfg.useSSL, false /* verbose */);
+  await socket.connect(session, true /* appearOnline */);
 
   return {
     client,
+    socket,
     session,
     userId: session.user_id ?? '',
     username: session.username ?? '',
     protocolVersion: WIRE_PROTOCOL_VERSION,
   };
+}
+
+/** Drop the cached session — next connect will re-authenticate fresh. */
+export function clearStoredSession(): void {
+  localStorage.removeItem(STORAGE_TOKEN);
+  localStorage.removeItem(STORAGE_REFRESH);
 }

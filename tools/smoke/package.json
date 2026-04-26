@@ -1,0 +1,14 @@
+{
+  "name": "@pyrce/smoke",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end smoke harnesses driving the running stack via the Nakama JS SDK",
+  "scripts": {
+    "m1": "node m1.mjs"
+  },
+  "dependencies": {
+    "@heroiclabs/nakama-js": "^2.8.0",
+    "ws": "^8.20.0"
+  }
+}
