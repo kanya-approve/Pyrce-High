@@ -1,3 +1,4 @@
+import { ATLAS_JSON, ATLAS_KEY, ATLAS_PNG } from '@pyrce/shared';
 import { Scene } from 'phaser';
 
 /**
@@ -11,6 +12,11 @@ export class Boot extends Scene {
 
   constructor() {
     super('Boot');
+  }
+
+  preload(): void {
+    // Atlas produced by tools/dmi-extract — Vite serves it from /public/atlases.
+    this.load.atlas(ATLAS_KEY, ATLAS_PNG, ATLAS_JSON);
   }
 
   create(): void {

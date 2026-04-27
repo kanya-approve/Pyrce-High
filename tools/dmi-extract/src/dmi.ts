@@ -189,15 +189,22 @@ export interface CellIter {
 export function* iterCells(parsed: ParsedDmi): Generator<CellIter> {
   const { header, states, png } = parsed;
   const cellsPerRow = Math.floor(png.width / header.width);
+  // BYOND allows duplicate state names within one DMI (distinguished by the
+  // `movement` flag). Tag duplicates with @1, @2, … so packed keys stay unique.
+  const seen = new Map<string, number>();
   let cellIndex = 0;
   for (const state of states) {
+    const baseName = state.name;
+    const n = seen.get(baseName) ?? 0;
+    seen.set(baseName, n + 1);
+    const tagged = n === 0 ? baseName : `${baseName}@${n}`;
     for (let f = 0; f < state.frames; f++) {
       for (let d = 0; d < state.dirs; d++) {
         const cx = cellIndex % cellsPerRow;
         const cy = Math.floor(cellIndex / cellsPerRow);
         const dir = DIR_ORDER[d]!;
         const cell: CellIter = {
-          stateName: state.name,
+          stateName: tagged,
           dir,
           frame: f,
           sx: cx * header.width,

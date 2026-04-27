@@ -1,6 +1,7 @@
 export * from './content/items.js';
 export * from './content/modes.js';
 export * from './content/roles.js';
+export * from './content/sprites.js';
 export * from './content/tilemap.js';
 export * from './enums.js';
 export * from './ids.js';

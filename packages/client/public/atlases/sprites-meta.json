@@ -3685,97 +3685,97 @@
       "frame": 0
     },
     {
-      "key": "mh-icons/smokeoverlay/_/S/0",
+      "key": "mh-icons/smokeoverlay/@1/S/0",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/N/0",
+      "key": "mh-icons/smokeoverlay/@1/N/0",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 0,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/E/0",
+      "key": "mh-icons/smokeoverlay/@1/E/0",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 0,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/W/0",
+      "key": "mh-icons/smokeoverlay/@1/W/0",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 0,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/S/1",
+      "key": "mh-icons/smokeoverlay/@1/S/1",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/N/1",
+      "key": "mh-icons/smokeoverlay/@1/N/1",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/E/1",
+      "key": "mh-icons/smokeoverlay/@1/E/1",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/W/1",
+      "key": "mh-icons/smokeoverlay/@1/W/1",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/S/2",
+      "key": "mh-icons/smokeoverlay/@1/S/2",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/N/2",
+      "key": "mh-icons/smokeoverlay/@1/N/2",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/E/2",
+      "key": "mh-icons/smokeoverlay/@1/E/2",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "mh-icons/smokeoverlay/_/W/2",
+      "key": "mh-icons/smokeoverlay/@1/W/2",
       "source": "mh-icons/smokeoverlay",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 2,
       "delay": 1
@@ -4381,153 +4381,153 @@
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/0",
+      "key": "mh-icons/ramiel/@1/S/0",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/1",
+      "key": "mh-icons/ramiel/@1/S/1",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/2",
+      "key": "mh-icons/ramiel/@1/S/2",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/3",
+      "key": "mh-icons/ramiel/@1/S/3",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 3,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/4",
+      "key": "mh-icons/ramiel/@1/S/4",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 4,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/5",
+      "key": "mh-icons/ramiel/@1/S/5",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 5,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/6",
+      "key": "mh-icons/ramiel/@1/S/6",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 6,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/7",
+      "key": "mh-icons/ramiel/@1/S/7",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 7,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/8",
+      "key": "mh-icons/ramiel/@1/S/8",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 8,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/9",
+      "key": "mh-icons/ramiel/@1/S/9",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 9,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/10",
+      "key": "mh-icons/ramiel/@1/S/10",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 10,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/11",
+      "key": "mh-icons/ramiel/@1/S/11",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 11,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/12",
+      "key": "mh-icons/ramiel/@1/S/12",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 12,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/13",
+      "key": "mh-icons/ramiel/@1/S/13",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 13,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/14",
+      "key": "mh-icons/ramiel/@1/S/14",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 14,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/15",
+      "key": "mh-icons/ramiel/@1/S/15",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 15,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/16",
+      "key": "mh-icons/ramiel/@1/S/16",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 16,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/17",
+      "key": "mh-icons/ramiel/@1/S/17",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 17,
       "delay": 1
     },
     {
-      "key": "mh-icons/ramiel/_/S/18",
+      "key": "mh-icons/ramiel/@1/S/18",
       "source": "mh-icons/ramiel",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 18,
       "delay": 1
@@ -6640,129 +6640,129 @@
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/S/0",
+      "key": "mh-icons/glowstick/@1/S/0",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/N/0",
+      "key": "mh-icons/glowstick/@1/N/0",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 0,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/E/0",
+      "key": "mh-icons/glowstick/@1/E/0",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 0,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/W/0",
+      "key": "mh-icons/glowstick/@1/W/0",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 0,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/S/1",
+      "key": "mh-icons/glowstick/@1/S/1",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/N/1",
+      "key": "mh-icons/glowstick/@1/N/1",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 1,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/E/1",
+      "key": "mh-icons/glowstick/@1/E/1",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 1,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/W/1",
+      "key": "mh-icons/glowstick/@1/W/1",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 1,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/S/2",
+      "key": "mh-icons/glowstick/@1/S/2",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 2,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/N/2",
+      "key": "mh-icons/glowstick/@1/N/2",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 2,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/E/2",
+      "key": "mh-icons/glowstick/@1/E/2",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 2,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/W/2",
+      "key": "mh-icons/glowstick/@1/W/2",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 2,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/S/3",
+      "key": "mh-icons/glowstick/@1/S/3",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 3,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/N/3",
+      "key": "mh-icons/glowstick/@1/N/3",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 3,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/E/3",
+      "key": "mh-icons/glowstick/@1/E/3",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 3,
       "delay": 2
     },
     {
-      "key": "mh-icons/glowstick/_/W/3",
+      "key": "mh-icons/glowstick/@1/W/3",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 3,
       "delay": 2
@@ -6775,16 +6775,16 @@
       "frame": 0
     },
     {
-      "key": "mh-icons/glowstick/_/S/0",
+      "key": "mh-icons/glowstick/@2/S/0",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@2",
       "dir": "S",
       "frame": 0
     },
     {
-      "key": "mh-icons/glowstick/_/S/0",
+      "key": "mh-icons/glowstick/@3/S/0",
       "source": "mh-icons/glowstick",
-      "state": "",
+      "state": "@3",
       "dir": "S",
       "frame": 0
     },
@@ -13298,65 +13298,65 @@
       "delay": 2
     },
     {
-      "key": "hair-overlays/WhiteGirlHair2/_/S/0",
+      "key": "hair-overlays/WhiteGirlHair2/@1/S/0",
       "source": "hair-overlays/WhiteGirlHair2",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/WhiteGirlHair2/_/N/0",
+      "key": "hair-overlays/WhiteGirlHair2/@1/N/0",
       "source": "hair-overlays/WhiteGirlHair2",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/WhiteGirlHair2/_/E/0",
+      "key": "hair-overlays/WhiteGirlHair2/@1/E/0",
       "source": "hair-overlays/WhiteGirlHair2",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/WhiteGirlHair2/_/W/0",
+      "key": "hair-overlays/WhiteGirlHair2/@1/W/0",
       "source": "hair-overlays/WhiteGirlHair2",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/WhiteGirlHair2/_/S/1",
+      "key": "hair-overlays/WhiteGirlHair2/@1/S/1",
       "source": "hair-overlays/WhiteGirlHair2",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/WhiteGirlHair2/_/N/1",
+      "key": "hair-overlays/WhiteGirlHair2/@1/N/1",
       "source": "hair-overlays/WhiteGirlHair2",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/WhiteGirlHair2/_/E/1",
+      "key": "hair-overlays/WhiteGirlHair2/@1/E/1",
       "source": "hair-overlays/WhiteGirlHair2",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/WhiteGirlHair2/_/W/1",
+      "key": "hair-overlays/WhiteGirlHair2/@1/W/1",
       "source": "hair-overlays/WhiteGirlHair2",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 1,
       "delay": 1
@@ -14142,129 +14142,129 @@
       "delay": 1
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/S/0",
+      "key": "hair-overlays/SilverBoyHair/@1/S/0",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/N/0",
+      "key": "hair-overlays/SilverBoyHair/@1/N/0",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 0,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/E/0",
+      "key": "hair-overlays/SilverBoyHair/@1/E/0",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 0,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/W/0",
+      "key": "hair-overlays/SilverBoyHair/@1/W/0",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 0,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/S/1",
+      "key": "hair-overlays/SilverBoyHair/@1/S/1",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/N/1",
+      "key": "hair-overlays/SilverBoyHair/@1/N/1",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 1,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/E/1",
+      "key": "hair-overlays/SilverBoyHair/@1/E/1",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 1,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/W/1",
+      "key": "hair-overlays/SilverBoyHair/@1/W/1",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 1,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/S/2",
+      "key": "hair-overlays/SilverBoyHair/@1/S/2",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 2,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/N/2",
+      "key": "hair-overlays/SilverBoyHair/@1/N/2",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 2,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/E/2",
+      "key": "hair-overlays/SilverBoyHair/@1/E/2",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 2,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/W/2",
+      "key": "hair-overlays/SilverBoyHair/@1/W/2",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 2,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/S/3",
+      "key": "hair-overlays/SilverBoyHair/@1/S/3",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 3,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/N/3",
+      "key": "hair-overlays/SilverBoyHair/@1/N/3",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 3,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/E/3",
+      "key": "hair-overlays/SilverBoyHair/@1/E/3",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 3,
       "delay": 2
     },
     {
-      "key": "hair-overlays/SilverBoyHair/_/W/3",
+      "key": "hair-overlays/SilverBoyHair/@1/W/3",
       "source": "hair-overlays/SilverBoyHair",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 3,
       "delay": 2
@@ -14482,97 +14482,97 @@
       "frame": 0
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/S/0",
+      "key": "hair-overlays/RedMaleBase/@1/S/0",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 143
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/N/0",
+      "key": "hair-overlays/RedMaleBase/@1/N/0",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 0,
       "delay": 143
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/E/0",
+      "key": "hair-overlays/RedMaleBase/@1/E/0",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 0,
       "delay": 143
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/W/0",
+      "key": "hair-overlays/RedMaleBase/@1/W/0",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 0,
       "delay": 143
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/S/1",
+      "key": "hair-overlays/RedMaleBase/@1/S/1",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/N/1",
+      "key": "hair-overlays/RedMaleBase/@1/N/1",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/E/1",
+      "key": "hair-overlays/RedMaleBase/@1/E/1",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/W/1",
+      "key": "hair-overlays/RedMaleBase/@1/W/1",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/S/2",
+      "key": "hair-overlays/RedMaleBase/@1/S/2",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/N/2",
+      "key": "hair-overlays/RedMaleBase/@1/N/2",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/E/2",
+      "key": "hair-overlays/RedMaleBase/@1/E/2",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedMaleBase/_/W/2",
+      "key": "hair-overlays/RedMaleBase/@1/W/2",
       "source": "hair-overlays/RedMaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 2,
       "delay": 1
@@ -15238,97 +15238,97 @@
       "frame": 0
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/S/0",
+      "key": "hair-overlays/RedFemaleBase/@1/S/0",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 135
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/N/0",
+      "key": "hair-overlays/RedFemaleBase/@1/N/0",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 0,
       "delay": 135
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/E/0",
+      "key": "hair-overlays/RedFemaleBase/@1/E/0",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 0,
       "delay": 135
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/W/0",
+      "key": "hair-overlays/RedFemaleBase/@1/W/0",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 0,
       "delay": 135
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/S/1",
+      "key": "hair-overlays/RedFemaleBase/@1/S/1",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/N/1",
+      "key": "hair-overlays/RedFemaleBase/@1/N/1",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/E/1",
+      "key": "hair-overlays/RedFemaleBase/@1/E/1",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/W/1",
+      "key": "hair-overlays/RedFemaleBase/@1/W/1",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/S/2",
+      "key": "hair-overlays/RedFemaleBase/@1/S/2",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/N/2",
+      "key": "hair-overlays/RedFemaleBase/@1/N/2",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/E/2",
+      "key": "hair-overlays/RedFemaleBase/@1/E/2",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/RedFemaleBase/_/W/2",
+      "key": "hair-overlays/RedFemaleBase/@1/W/2",
       "source": "hair-overlays/RedFemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 2,
       "delay": 1
@@ -17214,65 +17214,65 @@
       "delay": 2
     },
     {
-      "key": "hair-overlays/MaleEyes/_/S/0",
+      "key": "hair-overlays/MaleEyes/@1/S/0",
       "source": "hair-overlays/MaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/MaleEyes/_/N/0",
+      "key": "hair-overlays/MaleEyes/@1/N/0",
       "source": "hair-overlays/MaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/MaleEyes/_/E/0",
+      "key": "hair-overlays/MaleEyes/@1/E/0",
       "source": "hair-overlays/MaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/MaleEyes/_/W/0",
+      "key": "hair-overlays/MaleEyes/@1/W/0",
       "source": "hair-overlays/MaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/MaleEyes/_/S/1",
+      "key": "hair-overlays/MaleEyes/@1/S/1",
       "source": "hair-overlays/MaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/MaleEyes/_/N/1",
+      "key": "hair-overlays/MaleEyes/@1/N/1",
       "source": "hair-overlays/MaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/MaleEyes/_/E/1",
+      "key": "hair-overlays/MaleEyes/@1/E/1",
       "source": "hair-overlays/MaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/MaleEyes/_/W/1",
+      "key": "hair-overlays/MaleEyes/@1/W/1",
       "source": "hair-overlays/MaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 1,
       "delay": 1
@@ -17462,97 +17462,97 @@
       "frame": 0
     },
     {
-      "key": "hair-overlays/MaleBase/_/S/0",
+      "key": "hair-overlays/MaleBase/@1/S/0",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 140
     },
     {
-      "key": "hair-overlays/MaleBase/_/N/0",
+      "key": "hair-overlays/MaleBase/@1/N/0",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 0,
       "delay": 140
     },
     {
-      "key": "hair-overlays/MaleBase/_/E/0",
+      "key": "hair-overlays/MaleBase/@1/E/0",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 0,
       "delay": 140
     },
     {
-      "key": "hair-overlays/MaleBase/_/W/0",
+      "key": "hair-overlays/MaleBase/@1/W/0",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 0,
       "delay": 140
     },
     {
-      "key": "hair-overlays/MaleBase/_/S/1",
+      "key": "hair-overlays/MaleBase/@1/S/1",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/MaleBase/_/N/1",
+      "key": "hair-overlays/MaleBase/@1/N/1",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/MaleBase/_/E/1",
+      "key": "hair-overlays/MaleBase/@1/E/1",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/MaleBase/_/W/1",
+      "key": "hair-overlays/MaleBase/@1/W/1",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/MaleBase/_/S/2",
+      "key": "hair-overlays/MaleBase/@1/S/2",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/MaleBase/_/N/2",
+      "key": "hair-overlays/MaleBase/@1/N/2",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/MaleBase/_/E/2",
+      "key": "hair-overlays/MaleBase/@1/E/2",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/MaleBase/_/W/2",
+      "key": "hair-overlays/MaleBase/@1/W/2",
       "source": "hair-overlays/MaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 2,
       "delay": 1
@@ -18686,65 +18686,65 @@
       "frame": 0
     },
     {
-      "key": "hair-overlays/FemaleEyes/_/S/0",
+      "key": "hair-overlays/FemaleEyes/@1/S/0",
       "source": "hair-overlays/FemaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/FemaleEyes/_/N/0",
+      "key": "hair-overlays/FemaleEyes/@1/N/0",
       "source": "hair-overlays/FemaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/FemaleEyes/_/E/0",
+      "key": "hair-overlays/FemaleEyes/@1/E/0",
       "source": "hair-overlays/FemaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/FemaleEyes/_/W/0",
+      "key": "hair-overlays/FemaleEyes/@1/W/0",
       "source": "hair-overlays/FemaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 0,
       "delay": 50
     },
     {
-      "key": "hair-overlays/FemaleEyes/_/S/1",
+      "key": "hair-overlays/FemaleEyes/@1/S/1",
       "source": "hair-overlays/FemaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/FemaleEyes/_/N/1",
+      "key": "hair-overlays/FemaleEyes/@1/N/1",
       "source": "hair-overlays/FemaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/FemaleEyes/_/E/1",
+      "key": "hair-overlays/FemaleEyes/@1/E/1",
       "source": "hair-overlays/FemaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/FemaleEyes/_/W/1",
+      "key": "hair-overlays/FemaleEyes/@1/W/1",
       "source": "hair-overlays/FemaleEyes",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 1,
       "delay": 1
@@ -18906,97 +18906,97 @@
       "frame": 0
     },
     {
-      "key": "hair-overlays/FemaleBase/_/S/0",
+      "key": "hair-overlays/FemaleBase/@1/S/0",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 0,
       "delay": 135
     },
     {
-      "key": "hair-overlays/FemaleBase/_/N/0",
+      "key": "hair-overlays/FemaleBase/@1/N/0",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 0,
       "delay": 135
     },
     {
-      "key": "hair-overlays/FemaleBase/_/E/0",
+      "key": "hair-overlays/FemaleBase/@1/E/0",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 0,
       "delay": 135
     },
     {
-      "key": "hair-overlays/FemaleBase/_/W/0",
+      "key": "hair-overlays/FemaleBase/@1/W/0",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 0,
       "delay": 135
     },
     {
-      "key": "hair-overlays/FemaleBase/_/S/1",
+      "key": "hair-overlays/FemaleBase/@1/S/1",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/FemaleBase/_/N/1",
+      "key": "hair-overlays/FemaleBase/@1/N/1",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/FemaleBase/_/E/1",
+      "key": "hair-overlays/FemaleBase/@1/E/1",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/FemaleBase/_/W/1",
+      "key": "hair-overlays/FemaleBase/@1/W/1",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 1,
       "delay": 1
     },
     {
-      "key": "hair-overlays/FemaleBase/_/S/2",
+      "key": "hair-overlays/FemaleBase/@1/S/2",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "S",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/FemaleBase/_/N/2",
+      "key": "hair-overlays/FemaleBase/@1/N/2",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "N",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/FemaleBase/_/E/2",
+      "key": "hair-overlays/FemaleBase/@1/E/2",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "E",
       "frame": 2,
       "delay": 1
     },
     {
-      "key": "hair-overlays/FemaleBase/_/W/2",
+      "key": "hair-overlays/FemaleBase/@1/W/2",
       "source": "hair-overlays/FemaleBase",
-      "state": "",
+      "state": "@1",
       "dir": "W",
       "frame": 2,
       "delay": 1

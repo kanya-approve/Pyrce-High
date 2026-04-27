@@ -11,16 +11,19 @@ const AMBIENT_AT_DAWN = 0.0; // 6 AM
 /** Default light radius (in tiles) around the local player when nothing held. */
 const DEFAULT_VISION_RADIUS = 5;
 
+/** Anything with x/y in world coords — Rectangle, Image, Sprite, … */
+type Positioned = { x: number; y: number };
+
 interface RemoteSpriteRef {
   userId: string;
-  rect: Phaser.GameObjects.Rectangle;
+  rect: Positioned;
 }
 
 interface LightingData {
   /** GameWorld passes in fns so Lighting can read its current state. */
   game: () => ClientGameInfo;
   inventory: () => ClientInventory;
-  selfRect: () => Phaser.GameObjects.Rectangle | null;
+  selfRect: () => Positioned | null;
   remotes: () => RemoteSpriteRef[];
   worldWidthPx: number;
   worldHeightPx: number;

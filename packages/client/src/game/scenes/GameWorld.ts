@@ -1,5 +1,8 @@
 import {
+  ATLAS_KEY,
+  CHARACTER_SPRITES,
   type Facing,
+  ITEM_SPRITES,
   ITEMS,
   OpCode,
   type PublicCorpse,
@@ -47,7 +50,8 @@ interface GameWorldData {
 
 interface PlayerSprite {
   userId: string;
-  rect: Phaser.GameObjects.Rectangle;
+  rect: Phaser.GameObjects.Image;
+  outline: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
   hpBg: Phaser.GameObjects.Rectangle;
   hpFill: Phaser.GameObjects.Rectangle;
@@ -58,7 +62,7 @@ interface PlayerSprite {
 interface GroundSprite {
   groundItemId: string;
   data: PublicGroundItem;
-  dot: Phaser.GameObjects.Arc;
+  dot: Phaser.GameObjects.Image | Phaser.GameObjects.Arc;
 }
 
 interface CorpseSprite {
@@ -401,7 +405,8 @@ export class GameWorld extends Scene {
         if (!d) return;
         const s = this.players.get(d.userId);
         if (s) {
-          s.rect.setFillStyle(0x444444, 0.55);
+          s.rect.setTint(0x666666);
+          s.rect.setAlpha(0.55);
           s.label.setText(`†${s.state.username}`);
           this.updateHpBar(s);
         }
@@ -482,8 +487,15 @@ export class GameWorld extends Scene {
     const x = p.x * TILE + TILE / 2;
     const y = p.y * TILE + TILE / 2;
     const isMe = p.userId === this.match.userId;
-    const color = isMe ? 0x4cc8ff : 0xff7755;
-    const rect = this.add.rectangle(x, y, TILE - 4, TILE - 4, color).setStrokeStyle(2, 0x000000);
+    // Friendly tint ring under the sprite — gives me-vs-others visual cue
+    // until we have proper outlines / nameplates per faction.
+    const ringColor = isMe ? 0x4cc8ff : 0xff7755;
+    const outline = this.add
+      .rectangle(x, y, TILE - 2, TILE - 2)
+      .setStrokeStyle(2, ringColor, 0.7);
+    const frame = CHARACTER_SPRITES.male[facingToCardinal(p.facing)];
+    const rect = this.add.image(x, y, ATLAS_KEY, frame);
+    if (frame.endsWith('/W/0')) rect.setScale(1, 1); // W frames already drawn left-facing
     const label = this.add
       .text(x, y - TILE / 2 - 4, p.username, {
         fontFamily: 'Arial',
@@ -500,7 +512,7 @@ export class GameWorld extends Scene {
     const hpFill = this.add
       .rectangle(x - (TILE - 4) / 2, y - TILE / 2 - 18, TILE - 4, 4, 0x55ff55)
       .setOrigin(0, 1);
-    const sprite: PlayerSprite = { userId: p.userId, rect, label, hpBg, hpFill, state: p };
+    const sprite: PlayerSprite = { userId: p.userId, rect, outline, label, hpBg, hpFill, state: p };
     this.players.set(p.userId, sprite);
     this.updateHpBar(sprite);
   }
@@ -510,6 +522,7 @@ export class GameWorld extends Scene {
     if (!sprite) return;
     sprite.tween?.stop();
     sprite.rect.destroy();
+    sprite.outline.destroy();
     sprite.label.destroy();
     sprite.hpBg.destroy();
     sprite.hpFill.destroy();
@@ -600,8 +613,11 @@ export class GameWorld extends Scene {
     const targetX = x * TILE + TILE / 2;
     const targetY = y * TILE + TILE / 2;
     sprite.tween?.stop();
+    // Swap to the right facing frame instantly; the position tween handles motion.
+    const frame = CHARACTER_SPRITES.male[facingToCardinal(facing)];
+    sprite.rect.setFrame(frame);
     sprite.tween = this.tweens.add({
-      targets: [sprite.rect, sprite.label, sprite.hpBg, sprite.hpFill],
+      targets: [sprite.rect, sprite.outline, sprite.label, sprite.hpBg, sprite.hpFill],
       x: (t: Phaser.GameObjects.GameObject) =>
         t === sprite.hpFill ? targetX - (TILE - 4) / 2 : targetX,
       y: (t: Phaser.GameObjects.GameObject) => {
@@ -639,7 +655,11 @@ export class GameWorld extends Scene {
     }
     const cx = g.x * TILE + TILE / 2;
     const cy = g.y * TILE + TILE / 2;
-    const dot = this.add.circle(cx, cy, 5, 0xffe066).setStrokeStyle(1, 0x000000).setDepth(2);
+    const frame = ITEM_SPRITES[g.itemId];
+    const dot =
+      frame && this.textures.get(ATLAS_KEY).has(frame)
+        ? this.add.image(cx, cy, ATLAS_KEY, frame).setDepth(2)
+        : this.add.circle(cx, cy, 5, 0xffe066).setStrokeStyle(1, 0x000000).setDepth(2);
     this.groundSprites.set(g.groundItemId, { groundItemId: g.groundItemId, data: g, dot });
   }
 
@@ -704,6 +724,26 @@ function colourFor(category: string): string {
       return '#000000';
     default:
       return '#222';
+  }
+}
+
+function facingToCardinal(f: Facing): 'S' | 'N' | 'E' | 'W' {
+  // Diagonals collapse to the dominant cardinal so we don't need 8-frame art.
+  switch (f) {
+    case 'N':
+    case 'NE':
+    case 'NW':
+      return 'N';
+    case 'S':
+    case 'SE':
+    case 'SW':
+      return 'S';
+    case 'E':
+      return 'E';
+    case 'W':
+      return 'W';
+    default:
+      return 'S';
   }
 }
 
