@@ -124,6 +124,11 @@ const LOOT: Array<{ match: RegExp; rules: LootRule[] }> = [
       { itemId: 'wooden_bat', chance: 0.2 },
       { itemId: 'mop', chance: 0.15 },
       { itemId: 'tape', chance: 0.2 },
+      // Lethal weapons in some lockers — Default.dmm has no Knife_Rack so
+      // this is the easiest lethal source pre-M5 (when mode-driven spawn
+      // tables override loot).
+      { itemId: 'knife', chance: 0.15 },
+      { itemId: 'metal_pipe', chance: 0.1 },
     ],
   },
   {

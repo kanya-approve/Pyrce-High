@@ -1,4 +1,5 @@
 import {
+  type C2SAttack,
   type C2SContainerLook,
   type C2SContainerPut,
   type C2SContainerTake,
@@ -10,28 +11,41 @@ import {
   type C2SInvUse,
   type C2SLobbyStartGame,
   type C2SMoveIntent,
+  type C2SSearchCorpse,
+  type C2STakeFromCorpse,
   DIRECTION_DELTAS,
   type Facing,
   MatchPhase,
   OpCode,
+  type PublicCorpse,
   type PublicGroundItem,
+  type S2CAnnouncement,
   type S2CContainerContents,
+  type S2CCorpseContents,
+  type S2CCorpseDespawn,
+  type S2CCorpseSpawn,
   type S2CCraftResult,
   type S2CInitialSnapshot,
   type S2CInvDelta,
   type S2CInvFull,
   type S2CPhaseChange,
+  type S2CPlayerDied,
+  type S2CPlayerHealth,
+  type S2CPlayerHP,
   type S2CPlayerMoved,
+  type S2CPlayerStamina,
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
   WIRE_PROTOCOL_VERSION,
 } from '@pyrce/shared';
+import { checkBodyDiscoveries, regenStamina, resolveAttack } from '../combat.js';
 import { addItem, craft, findInstance, removeItem, setEquipped, setHotkey } from '../inventory.js';
 import { type ContainerInstance, seedContainers } from '../world/containers.js';
 import { fromInstance } from '../world/groundItems.js';
 import { tilemap } from '../world/tilemap.js';
 import {
   buildLabel,
+  type Corpse,
   countPresences,
   EMPTY_GRACE_TICKS,
   MAX_PLAYERS,
@@ -42,6 +56,9 @@ import {
   TICK_RATE,
   toPublicPlayerInGame,
 } from './state.js';
+
+/** Stamina regen runs every Nth tick (cheap, but no need to do it every tick). */
+const STAMINA_REGEN_EVERY_TICKS = 5;
 
 export const MATCH_NAME = 'pyrce_room';
 
@@ -68,6 +85,7 @@ export function matchInit(
     players: {},
     groundItems: {},
     containers: {},
+    corpses: {},
     tickN: 0,
     tickN_lastNonEmpty: 0,
   };
@@ -164,6 +182,30 @@ export function matchLoop(
     handleMessage(state, m, tick, dispatcher, logger);
   }
 
+  if (tick % STAMINA_REGEN_EVERY_TICKS === 0) {
+    regenStamina(state);
+    for (const userId in state.presences) {
+      const p = state.players[userId];
+      const pres = state.presences[userId];
+      if (p && pres) {
+        sendStamina(dispatcher, pres, p);
+      }
+    }
+  }
+
+  // Body-discovery scan — players walking past corpses pick them up. Cheap
+  // (≤22 × ≤22 per tick = trivial) so no need to rate-limit.
+  const discovered = checkBodyDiscoveries(state);
+  for (const c of discovered) {
+    broadcastAnnouncement(dispatcher, {
+      kind: 'body_discovered',
+      message: `Warning: dead body located! ${c.victimRealName} found by ${
+        state.players[c.discoveredByUserId ?? '']?.username ?? 'someone'
+      }.`,
+    });
+    broadcastCorpseUpdate(dispatcher, c);
+  }
+
   return { state };
 }
 
@@ -207,6 +249,15 @@ function handleMessage(
       break;
     case OpCode.C2S_MOVE_INTENT:
       handleMoveIntent(state, m, tick, dispatcher);
+      break;
+    case OpCode.C2S_ATTACK:
+      handleAttack(state, m, tick, dispatcher, logger);
+      break;
+    case OpCode.C2S_SEARCH_CORPSE:
+      handleSearchCorpse(state, m, dispatcher);
+      break;
+    case OpCode.C2S_TAKE_FROM_CORPSE:
+      handleTakeFromCorpse(state, m, dispatcher);
       break;
     case OpCode.C2S_INV_PICKUP:
       handleInvPickup(state, m, dispatcher);
@@ -533,6 +584,121 @@ function handleContainerPut(
   sendContainerContents(dispatcher, m.sender, c);
 }
 
+// ---------- combat + corpse handlers ----------
+
+function handleAttack(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  tick: number,
+  dispatcher: nkruntime.MatchDispatcher,
+  logger: nkruntime.Logger,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const attacker = state.players[m.sender.userId];
+  if (!attacker || !attacker.isAlive) return;
+
+  const req = parseBody<C2SAttack>(m.data) ?? {};
+  if (req.dir) attacker.facing = req.dir as Facing;
+
+  const result = resolveAttack(state, attacker, tick, req.dir as Facing | undefined);
+  if (!result.swung) return;
+
+  // Self-only stamina + facing snapshot.
+  sendStamina(dispatcher, m.sender, attacker);
+  // We send the attacker's facing as a movement broadcast so other clients
+  // turn the sprite to face the swing direction. Coordinates unchanged.
+  broadcastPlayerMoved(dispatcher, attacker, tick);
+
+  if (!result.hitUserId) return;
+  const victim = state.players[result.hitUserId];
+  if (!victim) return;
+
+  broadcastPlayerHealth(dispatcher, victim);
+  // Self-only HP detail to the victim's HUD.
+  const victimPresence = state.presences[victim.userId];
+  if (victimPresence) sendPlayerHP(dispatcher, victimPresence, victim);
+
+  if (result.killed && result.corpse) {
+    state.corpses[result.corpse.corpseId] = result.corpse;
+    broadcastPlayerDied(dispatcher, victim, attacker.userId, result.weaponName);
+    broadcastCorpseUpdate(dispatcher, result.corpse);
+    // Killer + corpse are both visible to anyone with line of sight; the
+    // body-discovery flow will fire on someone else walking adjacent.
+    logger.info(
+      'kill: %s killed %s with %s at (%d,%d)',
+      attacker.username,
+      victim.username,
+      result.weaponName,
+      victim.x,
+      victim.y,
+    );
+  }
+}
+
+function handleSearchCorpse(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player) return;
+  const req = parseBody<C2SSearchCorpse>(m.data);
+  if (!req) return;
+  const c = state.corpses[req.corpseId];
+  if (!c) return;
+  if (Math.max(Math.abs(player.x - c.x), Math.abs(player.y - c.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'corpse not adjacent');
+    return;
+  }
+  const payload: S2CCorpseContents = { corpseId: c.corpseId, contents: c.contents };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_CORPSE_CONTENTS,
+    JSON.stringify(payload),
+    [m.sender],
+    null,
+    true,
+  );
+}
+
+function handleTakeFromCorpse(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player) return;
+  const req = parseBody<C2STakeFromCorpse>(m.data);
+  if (!req) return;
+  const c = state.corpses[req.corpseId];
+  if (!c) return;
+  if (Math.max(Math.abs(player.x - c.x), Math.abs(player.y - c.y)) > 1) return;
+  const idx = c.contents.findIndex((it) => it.instanceId === req.instanceId);
+  if (idx === -1) return;
+  const taken = c.contents[idx];
+  if (!taken) return;
+  c.contents.splice(idx, 1);
+  const added = addItem(player.inventory, taken.itemId, taken.count, taken.data);
+  if (!added) {
+    c.contents.push(taken);
+    return;
+  }
+  sendInvDelta(dispatcher, state, m.sender, {
+    upserted: [added],
+    weight: player.inventory.weight,
+  });
+  // Echo the corpse contents so the client UI updates.
+  const payload: S2CCorpseContents = { corpseId: c.corpseId, contents: c.contents };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_CORPSE_CONTENTS,
+    JSON.stringify(payload),
+    [m.sender],
+    null,
+    true,
+  );
+}
+
 // ---------- world setup ----------
 
 function assignSpawns(state: PyrceMatchState): void {
@@ -651,6 +817,85 @@ function sendContainerContents(
     null,
     true,
   );
+}
+
+function sendStamina(
+  dispatcher: nkruntime.MatchDispatcher,
+  recipient: nkruntime.Presence,
+  player: PlayerInGame,
+): void {
+  const payload: S2CPlayerStamina = { stamina: player.stamina, maxStamina: player.maxStamina };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_PLAYER_STAMINA,
+    JSON.stringify(payload),
+    [recipient],
+    null,
+    true,
+  );
+}
+
+function sendPlayerHP(
+  dispatcher: nkruntime.MatchDispatcher,
+  recipient: nkruntime.Presence,
+  player: PlayerInGame,
+): void {
+  const payload: S2CPlayerHP = { hp: player.hp, maxHp: player.maxHp };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_PLAYER_HP,
+    JSON.stringify(payload),
+    [recipient],
+    null,
+    true,
+  );
+}
+
+function broadcastPlayerHealth(dispatcher: nkruntime.MatchDispatcher, player: PlayerInGame): void {
+  const payload: S2CPlayerHealth = {
+    userId: player.userId,
+    hp: player.hp,
+    maxHp: player.maxHp,
+    isAlive: player.isAlive,
+  };
+  dispatcher.broadcastMessage(OpCode.S2C_PLAYER_HEALTH, JSON.stringify(payload), null, null, true);
+}
+
+function broadcastPlayerDied(
+  dispatcher: nkruntime.MatchDispatcher,
+  victim: PlayerInGame,
+  killerUserId: string | null,
+  cause: string,
+): void {
+  const payload: S2CPlayerDied = {
+    userId: victim.userId,
+    killerUserId,
+    cause,
+    x: victim.x,
+    y: victim.y,
+  };
+  dispatcher.broadcastMessage(OpCode.S2C_PLAYER_DIED, JSON.stringify(payload), null, null, true);
+}
+
+function broadcastCorpseUpdate(dispatcher: nkruntime.MatchDispatcher, c: Corpse): void {
+  const pub: PublicCorpse = {
+    corpseId: c.corpseId,
+    victimUserId: c.victimUserId,
+    victimUsername: c.victimUsername,
+    // Real name only revealed once the body has been discovered.
+    victimRealName: c.discovered ? c.victimRealName : '',
+    x: c.x,
+    y: c.y,
+    discovered: c.discovered,
+    ...(c.discoveredByUserId ? { discoveredByUserId: c.discoveredByUserId } : {}),
+  };
+  const payload: S2CCorpseSpawn = { corpse: pub };
+  dispatcher.broadcastMessage(OpCode.S2C_CORPSE_SPAWN, JSON.stringify(payload), null, null, true);
+}
+
+function broadcastAnnouncement(
+  dispatcher: nkruntime.MatchDispatcher,
+  payload: S2CAnnouncement,
+): void {
+  dispatcher.broadcastMessage(OpCode.S2C_ANNOUNCEMENT, JSON.stringify(payload), null, null, true);
 }
 
 function sendInitialSnapshot(

@@ -26,7 +26,37 @@ export interface PlayerInGame {
   facing: Facing;
   /** Server tick of the last accepted move. Movement throttled by cooldown. */
   lastMoveTickN: number;
+  /** Server tick of the last accepted attack. */
+  lastAttackTickN: number;
+  hp: number;
+  maxHp: number;
+  stamina: number;
+  maxStamina: number;
+  isAlive: boolean;
+  /** Watcher (spectator) mode after death. */
+  isWatching: boolean;
+  /** True name for body-discovery messaging — leak-safe; only revealed on death. */
+  realName: string;
   inventory: InventoryState;
+}
+
+/**
+ * Persistent corpse left after a player dies. Lives in MatchState.corpses
+ * until the round ends. Searchable by anyone Chebyshev≤1; first non-killer
+ * search triggers the body-discovered announcement.
+ */
+export interface Corpse {
+  corpseId: string;
+  victimUserId: string;
+  victimUsername: string;
+  victimRealName: string;
+  killerUserId: string | null;
+  cause: string;
+  x: number;
+  y: number;
+  contents: import('@pyrce/shared').ItemInstance[];
+  discovered: boolean;
+  discoveredByUserId: string | null;
 }
 
 export interface PyrceMatchState {
@@ -55,6 +85,9 @@ export interface PyrceMatchState {
   /** containerId -> container state. Seeded once on InGame entry. */
   containers: { [containerId: string]: ContainerInstance };
 
+  /** corpseId -> corpse. Persists for the round. */
+  corpses: { [corpseId: string]: Corpse };
+
   /** Tick counter, monotonically increasing. */
   tickN: number;
 
@@ -76,6 +109,14 @@ export function newPlayerInGame(
     y,
     facing: 'S',
     lastMoveTickN: 0,
+    lastAttackTickN: 0,
+    hp: 100,
+    maxHp: 100,
+    stamina: 100,
+    maxStamina: 100,
+    isAlive: true,
+    isWatching: false,
+    realName: username, // M5 will override with role-assigned realname
     inventory: {
       items: [],
       hotkeys: [null, null, null, null, null],
@@ -122,5 +163,8 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
     x: p.x,
     y: p.y,
     facing: p.facing,
+    hp: p.hp,
+    maxHp: p.maxHp,
+    isAlive: p.isAlive,
   };
 }

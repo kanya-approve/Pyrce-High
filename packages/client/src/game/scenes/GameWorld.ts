@@ -2,14 +2,21 @@ import {
   type Facing,
   ITEMS,
   OpCode,
+  type PublicCorpse,
   type PublicGroundItem,
   type PublicPlayerInGame,
+  type S2CAnnouncement,
   type S2CContainerContents,
+  type S2CCorpseSpawn,
   type S2CCraftResult,
   type S2CInitialSnapshot,
   type S2CInvDelta,
   type S2CInvFull,
+  type S2CPlayerDied,
+  type S2CPlayerHealth,
+  type S2CPlayerHP,
   type S2CPlayerMoved,
+  type S2CPlayerStamina,
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
   type TilemapJson,
@@ -38,6 +45,8 @@ interface PlayerSprite {
   userId: string;
   rect: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
+  hpBg: Phaser.GameObjects.Rectangle;
+  hpFill: Phaser.GameObjects.Rectangle;
   state: PublicPlayerInGame;
   tween?: Phaser.Tweens.Tween;
 }
@@ -46,6 +55,13 @@ interface GroundSprite {
   groundItemId: string;
   data: PublicGroundItem;
   dot: Phaser.GameObjects.Arc;
+}
+
+interface CorpseSprite {
+  corpseId: string;
+  data: PublicCorpse;
+  rect: Phaser.GameObjects.Rectangle;
+  label: Phaser.GameObjects.Text;
 }
 
 export class GameWorld extends Scene {
@@ -62,6 +78,7 @@ export class GameWorld extends Scene {
   };
   private actionKeys!: {
     E: Phaser.Input.Keyboard.Key;
+    F: Phaser.Input.Keyboard.Key;
     G: Phaser.Input.Keyboard.Key;
     C: Phaser.Input.Keyboard.Key;
     I: Phaser.Input.Keyboard.Key;
@@ -81,6 +98,8 @@ export class GameWorld extends Scene {
     y: number;
     rect: Phaser.GameObjects.Rectangle;
   }> = [];
+  private corpseSprites = new Map<string, CorpseSprite>();
+  private deathOverlay?: Phaser.GameObjects.Rectangle;
 
   constructor() {
     super('GameWorld');
@@ -116,9 +135,10 @@ export class GameWorld extends Scene {
       this.cursors = this.input.keyboard.createCursorKeys();
       this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D') as typeof this.wasdKeys;
       this.actionKeys = this.input.keyboard.addKeys(
-        'E,G,C,I,ONE,TWO,THREE,FOUR,FIVE',
+        'E,F,G,C,I,ONE,TWO,THREE,FOUR,FIVE',
       ) as typeof this.actionKeys;
       this.actionKeys.E.on('down', () => this.handleInteract());
+      this.actionKeys.F.on('down', () => this.handleAttack());
       this.actionKeys.G.on('down', () => this.handleDropEquipped());
       this.actionKeys.C.on('down', () => this.handleCraft('spear'));
       this.actionKeys.I.on('down', () => this.scene.get('Hud').events.emit('inv:refresh'));
@@ -186,6 +206,10 @@ export class GameWorld extends Scene {
     }
   }
 
+  private handleAttack(): void {
+    void this.match.sendMatch(OpCode.C2S_ATTACK, {});
+  }
+
   private handleHotkey(slot: 1 | 2 | 3 | 4 | 5): void {
     const ref = this.inventory.hotkeys[slot - 1];
     if (!ref) return;
@@ -216,6 +240,9 @@ export class GameWorld extends Scene {
             x: m.x,
             y: m.y,
             facing: m.facing,
+            hp: 100,
+            maxHp: 100,
+            isAlive: true,
           });
           return;
         }
@@ -282,6 +309,52 @@ export class GameWorld extends Scene {
         this.notifyHud(r.ok ? `crafted ${r.recipeId}` : `craft failed: ${r.error}`);
         break;
       }
+      case OpCode.S2C_PLAYER_HEALTH: {
+        const h = parsePayload<S2CPlayerHealth>(data);
+        if (!h) return;
+        const s = this.players.get(h.userId);
+        if (s) {
+          s.state = { ...s.state, hp: h.hp, maxHp: h.maxHp, isAlive: h.isAlive };
+          this.updateHpBar(s);
+        }
+        break;
+      }
+      case OpCode.S2C_PLAYER_HP: {
+        const h = parsePayload<S2CPlayerHP>(data);
+        if (!h) return;
+        this.notifyHud(`HP ${h.hp}/${h.maxHp}`);
+        break;
+      }
+      case OpCode.S2C_PLAYER_STAMINA: {
+        // No HUD bar yet; just absorb. M4.x can render a stamina bar.
+        parsePayload<S2CPlayerStamina>(data);
+        break;
+      }
+      case OpCode.S2C_PLAYER_DIED: {
+        const d = parsePayload<S2CPlayerDied>(data);
+        if (!d) return;
+        const s = this.players.get(d.userId);
+        if (s) {
+          s.rect.setFillStyle(0x444444, 0.55);
+          s.label.setText(`†${s.state.username}`);
+          this.updateHpBar(s);
+        }
+        if (d.userId === this.match.userId) this.showDeathOverlay(d);
+        this.notifyHud(`${s?.state.username ?? d.userId.slice(0, 6)} died (${d.cause})`);
+        break;
+      }
+      case OpCode.S2C_CORPSE_SPAWN: {
+        const c = parsePayload<S2CCorpseSpawn>(data);
+        if (!c) return;
+        this.spawnCorpse(c.corpse);
+        break;
+      }
+      case OpCode.S2C_ANNOUNCEMENT: {
+        const a = parsePayload<S2CAnnouncement>(data);
+        if (!a) return;
+        this.flashAnnouncement(a);
+        break;
+      }
     }
     this.scene.get('Hud').events.emit('inv:refresh');
   }
@@ -330,7 +403,16 @@ export class GameWorld extends Scene {
         strokeThickness: 3,
       })
       .setOrigin(0.5, 1);
-    this.players.set(p.userId, { userId: p.userId, rect, label, state: p });
+    const hpBg = this.add
+      .rectangle(x, y - TILE / 2 - 18, TILE - 4, 4, 0x330000)
+      .setStrokeStyle(1, 0x000000)
+      .setOrigin(0.5, 1);
+    const hpFill = this.add
+      .rectangle(x - (TILE - 4) / 2, y - TILE / 2 - 18, TILE - 4, 4, 0x55ff55)
+      .setOrigin(0, 1);
+    const sprite: PlayerSprite = { userId: p.userId, rect, label, hpBg, hpFill, state: p };
+    this.players.set(p.userId, sprite);
+    this.updateHpBar(sprite);
   }
 
   private despawnPlayer(userId: string): void {
@@ -339,7 +421,89 @@ export class GameWorld extends Scene {
     sprite.tween?.stop();
     sprite.rect.destroy();
     sprite.label.destroy();
+    sprite.hpBg.destroy();
+    sprite.hpFill.destroy();
     this.players.delete(userId);
+  }
+
+  private updateHpBar(s: PlayerSprite): void {
+    const ratio = Math.max(0, Math.min(1, s.state.maxHp > 0 ? s.state.hp / s.state.maxHp : 0));
+    const w = Math.max(0, (TILE - 4) * ratio);
+    s.hpFill.setSize(w, 4);
+    const colour = ratio > 0.66 ? 0x55ff55 : ratio > 0.33 ? 0xffcc44 : 0xff5555;
+    s.hpFill.setFillStyle(colour);
+    s.hpFill.setVisible(s.state.isAlive);
+    s.hpBg.setVisible(s.state.isAlive);
+  }
+
+  private spawnCorpse(c: PublicCorpse): void {
+    const existing = this.corpseSprites.get(c.corpseId);
+    if (existing) {
+      existing.rect.destroy();
+      existing.label.destroy();
+    }
+    const x = c.x * TILE + TILE / 2;
+    const y = c.y * TILE + TILE / 2;
+    const rect = this.add
+      .rectangle(x, y, TILE - 4, TILE - 4, 0x551111, 0.85)
+      .setStrokeStyle(2, 0x880000)
+      .setDepth(1.5);
+    const tag = c.discovered ? `† ${c.victimRealName || c.victimUsername}` : '†';
+    const label = this.add
+      .text(x, y + TILE / 2 + 2, tag, {
+        fontFamily: 'Arial',
+        fontSize: 10,
+        color: '#ffaaaa',
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(1.5);
+    this.corpseSprites.set(c.corpseId, { corpseId: c.corpseId, data: c, rect, label });
+  }
+
+  private showDeathOverlay(d: S2CPlayerDied): void {
+    const { width, height } = this.scale.gameSize;
+    if (!this.deathOverlay) {
+      this.deathOverlay = this.add
+        .rectangle(0, 0, width, height, 0x000000, 0.55)
+        .setOrigin(0, 0)
+        .setScrollFactor(0)
+        .setDepth(2000);
+      this.add
+        .text(width / 2, height / 2, `You died — killed by ${d.cause}.\nSpectating…`, {
+          fontFamily: 'Arial Black',
+          fontSize: 32,
+          color: '#ffffff',
+          align: 'center',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(2001);
+    }
+  }
+
+  private flashAnnouncement(a: S2CAnnouncement): void {
+    const { width } = this.scale.gameSize;
+    const banner = this.add
+      .text(width / 2, 56, a.message, {
+        fontFamily: 'Arial Black',
+        fontSize: 22,
+        color: '#ff5555',
+        backgroundColor: '#000000cc',
+        padding: { left: 14, right: 14, top: 8, bottom: 8 },
+        align: 'center',
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1500);
+    this.tweens.add({
+      targets: banner,
+      alpha: 0,
+      delay: 4500,
+      duration: 600,
+      onComplete: () => banner.destroy(),
+    });
   }
 
   private moveSprite(sprite: PlayerSprite, x: number, y: number, facing: Facing): void {
@@ -347,10 +511,14 @@ export class GameWorld extends Scene {
     const targetY = y * TILE + TILE / 2;
     sprite.tween?.stop();
     sprite.tween = this.tweens.add({
-      targets: [sprite.rect, sprite.label],
-      x: () => targetX,
-      y: (t: Phaser.GameObjects.GameObject) =>
-        t === sprite.label ? targetY - TILE / 2 - 4 : targetY,
+      targets: [sprite.rect, sprite.label, sprite.hpBg, sprite.hpFill],
+      x: (t: Phaser.GameObjects.GameObject) =>
+        t === sprite.hpFill ? targetX - (TILE - 4) / 2 : targetX,
+      y: (t: Phaser.GameObjects.GameObject) => {
+        if (t === sprite.label) return targetY - TILE / 2 - 4;
+        if (t === sprite.hpBg || t === sprite.hpFill) return targetY - TILE / 2 - 18;
+        return targetY;
+      },
       duration: MOVE_TWEEN_MS,
       ease: 'Sine.easeInOut',
     });

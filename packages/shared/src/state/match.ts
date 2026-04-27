@@ -29,4 +29,6 @@ export interface PublicPlayerSnapshot {
   isAlive: boolean;
   isWatching: boolean;
   disconnected: boolean;
+  hp: number;
+  maxHp: number;
 }

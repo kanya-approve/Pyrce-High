@@ -26,6 +26,9 @@ export interface PublicPlayerInGame {
   x: number;
   y: number;
   facing: Facing;
+  hp: number;
+  maxHp: number;
+  isAlive: boolean;
 }
 
 export interface S2CPhaseChange {
