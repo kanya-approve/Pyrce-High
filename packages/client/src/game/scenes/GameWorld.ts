@@ -166,9 +166,20 @@ export class GameWorld extends Scene {
       .setScrollFactor(0)
       .setDepth(1000);
 
-    // Persistent HUD overlay + chat overlay.
+    // Persistent HUD overlay + chat overlay + lighting overlay.
     this.scene.launch('Hud', { inventory: () => this.inventory, game: () => this.gameInfo });
     this.scene.launch('ChatOverlay');
+    this.scene.launch('Lighting', {
+      game: () => this.gameInfo,
+      inventory: () => this.inventory,
+      selfRect: () => this.players.get(this.match.userId)?.rect ?? null,
+      remotes: () =>
+        Array.from(this.players.values())
+          .filter((s) => s.userId !== this.match.userId && s.state.isAlive)
+          .map((s) => ({ userId: s.userId, rect: s.rect })),
+      worldWidthPx: this.map.width * TILE,
+      worldHeightPx: this.map.height * TILE,
+    });
 
     // Chat bubbles fired by the ChatOverlay scene.
     this.game.events.on(
@@ -186,6 +197,7 @@ export class GameWorld extends Scene {
     this.game.events.off('chat:bubble');
     this.scene.stop('Hud');
     this.scene.stop('ChatOverlay');
+    this.scene.stop('Lighting');
   }
 
   private spawnChatBubble(userId: string, body: string, durationMs: number): void {
