@@ -134,7 +134,11 @@ export class LobbyBrowser extends Scene {
       // joining user's own presence is in `self`. Other players arrive via
       // onmatchpresence events.
       const initialPresences = m.self ? [m.self] : [];
-      this.scene.start('Lobby', { matchId: created.matchId, presences: initialPresences });
+      this.scene.start('Lobby', {
+        matchId: created.matchId,
+        presences: initialPresences,
+        hostUserId: created.label.hostUserId ?? this.match.userId,
+      });
     } catch (err) {
       console.error('[pyrce] createMatch failed', err);
       this.statusText.setText(`Create failed: ${(err as Error).message}`).setColor('#ff8080');
@@ -148,9 +152,14 @@ export class LobbyBrowser extends Scene {
     this.busy = true;
     this.statusText.setText('Joining…').setColor('#aaaaaa');
     try {
+      const listing = this.listings.find((l) => l.matchId === matchId);
       const m = await this.match.joinMatch(matchId);
       const initialPresences = m.self ? [m.self] : [];
-      this.scene.start('Lobby', { matchId, presences: initialPresences });
+      this.scene.start('Lobby', {
+        matchId,
+        presences: initialPresences,
+        hostUserId: listing?.label.hostUserId ?? null,
+      });
     } catch (err) {
       console.error('[pyrce] joinMatch failed', err);
       this.statusText.setText(`Join failed: ${(err as Error).message}`).setColor('#ff8080');

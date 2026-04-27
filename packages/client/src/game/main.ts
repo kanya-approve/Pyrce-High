@@ -1,6 +1,6 @@
 import { AUTO, Game, Scale, type Types } from 'phaser';
 import { Boot } from './scenes/Boot';
-import { Game as GameScene } from './scenes/Game';
+import { GameWorld } from './scenes/GameWorld';
 import { Lobby } from './scenes/Lobby';
 import { LobbyBrowser } from './scenes/LobbyBrowser';
 
@@ -14,7 +14,7 @@ const config: Types.Core.GameConfig = {
     mode: Scale.FIT,
     autoCenter: Scale.CENTER_BOTH,
   },
-  scene: [Boot, LobbyBrowser, Lobby, GameScene],
+  scene: [Boot, LobbyBrowser, Lobby, GameWorld],
 };
 
 const StartGame = (parent: string): Phaser.Game => {

@@ -89,7 +89,7 @@ export function saveProfileRpc(
   } catch {
     throw newError('invalid_json', 3);
   }
-  if (!req || !req.profile || req.profile.schemaVersion !== 1) {
+  if (!req?.profile || req.profile.schemaVersion !== 1) {
     throw newError('invalid_profile', 3);
   }
 

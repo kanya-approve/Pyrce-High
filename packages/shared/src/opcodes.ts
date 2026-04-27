@@ -21,6 +21,8 @@ export enum OpCode {
   C2S_LOBBY_START_GAME = 1102,
   C2S_LOBBY_KICK = 1103,
 
+  C2S_MOVE_INTENT = 1300,
+
   // ===== Server → Client =====
   S2C_HELLO = 2000,
   S2C_ERROR = 2001,
@@ -31,4 +33,7 @@ export enum OpCode {
   S2C_LOBBY_PLAYER_JOIN = 2102,
   S2C_LOBBY_PLAYER_LEAVE = 2103,
   S2C_LOBBY_HOST_CHANGED = 2104,
+
+  S2C_INITIAL_SNAPSHOT = 2300,
+  S2C_PLAYER_MOVED = 2310,
 }

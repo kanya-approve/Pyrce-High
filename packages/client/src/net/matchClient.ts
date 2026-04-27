@@ -1,10 +1,18 @@
-import type { Client, Match, MatchPresenceEvent, Session, Socket } from '@heroiclabs/nakama-js';
+import type {
+  Client,
+  Match,
+  MatchData,
+  MatchPresenceEvent,
+  Session,
+  Socket,
+} from '@heroiclabs/nakama-js';
 import {
   type CreateMatchRequest,
   type CreateMatchResponse,
   type ListMatchesResponse,
   type LoadProfileResponse,
   type MatchListing,
+  type OpCode,
   type ProfileV1,
   RpcId,
   type SaveProfileRequest,
@@ -17,6 +25,9 @@ import {
  * `{ payload: jsonString }` envelope).
  */
 export class NakamaMatchClient {
+  /** id of the match the user is currently joined to (server-issued). */
+  currentMatchId: string | null = null;
+
   constructor(
     private readonly client: Client,
     private readonly socket: Socket,
@@ -59,15 +70,34 @@ export class NakamaMatchClient {
   // ---------- Realtime match join/leave ----------
 
   async joinMatch(matchId: string): Promise<Match> {
-    return await this.socket.joinMatch(matchId);
+    const m = await this.socket.joinMatch(matchId);
+    this.currentMatchId = m.match_id;
+    return m;
   }
 
   async leaveMatch(matchId: string): Promise<void> {
     await this.socket.leaveMatch(matchId);
+    if (this.currentMatchId === matchId) this.currentMatchId = null;
+  }
+
+  /** Send a typed match-data message to the current match. */
+  async sendMatch(op: OpCode, payload: unknown): Promise<void> {
+    if (!this.currentMatchId) return;
+    const data = JSON.stringify(payload ?? {});
+    await this.socket.sendMatchState(this.currentMatchId, op, data);
   }
 
   onPresenceChange(cb: (ev: MatchPresenceEvent) => void): void {
     this.socket.onmatchpresence = cb;
+  }
+
+  /**
+   * Subscribe to incoming match data. The latest registered callback wins —
+   * scenes register on `create()` and the previous scene's callback is
+   * naturally replaced when the next scene mounts.
+   */
+  onMatchData(cb: (data: MatchData) => void): void {
+    this.socket.onmatchdata = cb;
   }
 
   // ---------- Internals ----------

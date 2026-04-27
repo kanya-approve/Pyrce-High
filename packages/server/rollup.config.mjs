@@ -1,4 +1,5 @@
 import commonjs from '@rollup/plugin-commonjs';
+import json from '@rollup/plugin-json';
 import resolve from '@rollup/plugin-node-resolve';
 import typescript from '@rollup/plugin-typescript';
 
@@ -28,6 +29,12 @@ export default {
       preferBuiltins: false,
     }),
     commonjs(),
+    json({
+      // Inline tilemap JSON (and any other content imports) into the bundle.
+      preferConst: true,
+      compact: true,
+      namedExports: false,
+    }),
     typescript({
       tsconfig: './tsconfig.json',
       sourceMap: false,

@@ -1,20 +1,25 @@
 import type { Presence } from '@heroiclabs/nakama-js';
+import { MatchPhase, OpCode, type S2CPhaseChange } from '@pyrce/shared';
 import { Scene } from 'phaser';
 import type { NakamaMatchClient } from '../../net/matchClient';
 
 interface LobbyData {
   matchId: string;
   presences: Presence[];
+  hostUserId: string | null;
 }
 
 /**
  * Joined-lobby waiting room. Shows the player list (updated via match
- * presence events). Host has a Start button (no-op until M5 wires the mode
- * engine). Anyone can Leave back to the browser.
+ * presence events). Host has a Start button that sends
+ * `C2S_LOBBY_START_GAME` to the match handler; the resulting
+ * `S2C_PHASE_CHANGE` to InGame triggers the scene transition into
+ * GameWorld.
  */
 export class Lobby extends Scene {
   private match!: NakamaMatchClient;
   private matchId!: string;
+  private hostUserId: string | null = null;
   private presences = new Map<string, Presence>();
   private playerListText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
@@ -25,6 +30,7 @@ export class Lobby extends Scene {
 
   init(data: LobbyData): void {
     this.matchId = data.matchId;
+    this.hostUserId = data.hostUserId ?? null;
     this.presences.clear();
     for (const p of data.presences ?? []) {
       this.presences.set(p.user_id, p);
@@ -43,8 +49,11 @@ export class Lobby extends Scene {
       })
       .setOrigin(0.5, 0);
 
+    const subtitle = this.amHost()
+      ? 'You are the host. Click Start to begin.'
+      : 'Waiting for the host to start…';
     this.add
-      .text(width / 2, 90, 'Waiting for players…', {
+      .text(width / 2, 90, subtitle, {
         fontFamily: 'Arial',
         fontSize: 14,
         color: '#888888',
@@ -66,9 +75,9 @@ export class Lobby extends Scene {
       .setOrigin(0.5);
 
     this.makeButton(width / 2 - 240, height - 90, 200, 40, '← Leave', () => this.handleLeave());
-    this.makeButton(width / 2 + 40, height - 90, 200, 40, 'Start Game (M5+)', () =>
-      this.handleStart(),
-    );
+    if (this.amHost()) {
+      this.makeButton(width / 2 + 40, height - 90, 200, 40, 'Start Game', () => this.handleStart());
+    }
 
     this.match.onPresenceChange((ev) => {
       for (const p of ev.joins ?? []) this.presences.set(p.user_id, p);
@@ -76,11 +85,32 @@ export class Lobby extends Scene {
       this.renderPlayers();
     });
 
+    this.match.onMatchData((msg) => {
+      if (msg.op_code === OpCode.S2C_PHASE_CHANGE) {
+        const payload = parsePayload<S2CPhaseChange>(msg.data);
+        if (payload && payload.phase === MatchPhase.InGame && payload.players) {
+          this.scene.start('GameWorld', {
+            matchId: this.matchId,
+            players: payload.players,
+            gameModeId: payload.gameModeId ?? null,
+          });
+        }
+      } else if (msg.op_code === OpCode.S2C_ERROR) {
+        const err = parsePayload<{ code: string; message?: string }>(msg.data);
+        if (err) this.statusText.setText(`Server: ${err.message ?? err.code}`).setColor('#ff8080');
+      }
+    });
+
     this.renderPlayers();
   }
 
   shutdown(): void {
     this.match.onPresenceChange(() => {});
+    this.match.onMatchData(() => {});
+  }
+
+  private amHost(): boolean {
+    return !!this.hostUserId && this.hostUserId === this.match.userId;
   }
 
   private renderPlayers(): void {
@@ -92,7 +122,8 @@ export class Lobby extends Scene {
     let i = 1;
     for (const p of this.presences.values()) {
       const tag = p.user_id === this.match.userId ? ' (you)' : '';
-      lines.push(`${String(i).padStart(2, ' ')}.  ${p.username}${tag}`);
+      const host = p.user_id === this.hostUserId ? ' [host]' : '';
+      lines.push(`${String(i).padStart(2, ' ')}.  ${p.username}${tag}${host}`);
       i++;
     }
     this.playerListText.setText(lines.join('\n'));
@@ -107,8 +138,14 @@ export class Lobby extends Scene {
     this.scene.start('LobbyBrowser');
   }
 
-  private handleStart(): void {
-    this.statusText.setText('Start is a no-op until M5 (mode engine + Normal mode).');
+  private async handleStart(): Promise<void> {
+    this.statusText.setText('Starting…').setColor('#aaaaaa');
+    try {
+      await this.match.sendMatch(OpCode.C2S_LOBBY_START_GAME, { gameModeId: 'normal' });
+    } catch (err) {
+      console.error('[pyrce] start failed', err);
+      this.statusText.setText(`Start failed: ${(err as Error).message}`).setColor('#ff8080');
+    }
   }
 
   private makeButton(
@@ -133,5 +170,15 @@ export class Lobby extends Scene {
     bg.on('pointerdown', onClick);
     txt.setInteractive({ useHandCursor: true });
     txt.on('pointerdown', onClick);
+  }
+}
+
+function parsePayload<T>(data: string | Uint8Array): T | null {
+  const raw = typeof data === 'string' ? data : new TextDecoder().decode(data);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
   }
 }
