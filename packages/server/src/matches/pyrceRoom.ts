@@ -1,3 +1,10 @@
+import type {
+  C2SChat,
+  C2STypingBegin,
+  C2STypingEnd,
+  S2CChatMessage,
+  S2CTyping,
+} from '@pyrce/shared';
 import {
   type C2SAttack,
   type C2SContainerLook,
@@ -44,6 +51,7 @@ import {
   type S2CWorldGroundItems,
   WIRE_PROTOCOL_VERSION,
 } from '@pyrce/shared';
+import { routeChat, sanitizeChatBody } from '../chat.js';
 import { checkBodyDiscoveries, regenStamina, resolveAttack } from '../combat.js';
 import { addItem, craft, findInstance, removeItem, setEquipped, setHotkey } from '../inventory.js';
 import {
@@ -301,6 +309,15 @@ function handleMessage(
       break;
     case OpCode.C2S_ATTACK:
       handleAttack(state, m, tick, dispatcher, logger);
+      break;
+    case OpCode.C2S_CHAT:
+      handleChat(state, m, tick, dispatcher);
+      break;
+    case OpCode.C2S_TYPING_BEGIN:
+      handleTyping(state, m, dispatcher, true);
+      break;
+    case OpCode.C2S_TYPING_END:
+      handleTyping(state, m, dispatcher, false);
       break;
     case OpCode.C2S_SEARCH_CORPSE:
       handleSearchCorpse(state, m, dispatcher);
@@ -660,6 +677,66 @@ function handleContainerPut(
     weight: r.inventory.weight,
   });
   sendContainerContents(dispatcher, m.sender, c);
+}
+
+// ---------- chat handlers ----------
+
+function handleChat(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  tick: number,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const sender = state.players[m.sender.userId];
+  if (!sender) return;
+  const req = parseBody<C2SChat>(m.data);
+  if (!req || !req.channel) return;
+  const body = sanitizeChatBody(req.body);
+  if (body.length === 0) return;
+
+  const { recipients, bubble } = routeChat(state, sender, req.channel);
+  if (recipients.length === 0) return;
+
+  const payload: S2CChatMessage = {
+    channel: req.channel,
+    fromUserId: sender.userId,
+    fromUsername: sender.username,
+    body,
+    bubble,
+    tickN: tick,
+  };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_CHAT_MESSAGE,
+    JSON.stringify(payload),
+    recipients,
+    null,
+    true,
+  );
+}
+
+function handleTyping(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+  active: boolean,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const sender = state.players[m.sender.userId];
+  if (!sender) return;
+  const req = parseBody<C2STypingBegin | C2STypingEnd>(m.data);
+  if (!req || !req.channel) return;
+
+  // Use the same proximity rules as the chat itself; typing indicators on
+  // OOC / dead are dropped (too noisy).
+  const { recipients } = routeChat(state, sender, req.channel);
+  if (recipients.length === 0) return;
+  const payload: S2CTyping = {
+    fromUserId: sender.userId,
+    channel: req.channel,
+    active,
+  };
+  dispatcher.broadcastMessage(OpCode.S2C_TYPING, JSON.stringify(payload), recipients, null, true);
 }
 
 // ---------- combat + corpse handlers ----------

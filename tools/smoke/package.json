@@ -9,7 +9,8 @@
     "m2": "node m2.mjs",
     "m3": "node m3.mjs",
     "m4": "node m4.mjs",
-    "m5": "node m5.mjs"
+    "m5": "node m5.mjs",
+    "m6": "node m6.mjs"
   },
   "dependencies": {
     "@heroiclabs/nakama-js": "^2.8.0",

@@ -166,15 +166,63 @@ export class GameWorld extends Scene {
       .setScrollFactor(0)
       .setDepth(1000);
 
-    // Persistent HUD overlay.
+    // Persistent HUD overlay + chat overlay.
     this.scene.launch('Hud', { inventory: () => this.inventory, game: () => this.gameInfo });
+    this.scene.launch('ChatOverlay');
+
+    // Chat bubbles fired by the ChatOverlay scene.
+    this.game.events.on(
+      'chat:bubble',
+      (ev: { userId: string; body: string; durationMs: number }) => {
+        this.spawnChatBubble(ev.userId, ev.body, ev.durationMs);
+      },
+    );
 
     this.match.onMatchData((msg) => this.handleMatchData(msg.op_code, msg.data));
   }
 
   shutdown(): void {
     this.match.onMatchData(() => {});
+    this.game.events.off('chat:bubble');
     this.scene.stop('Hud');
+    this.scene.stop('ChatOverlay');
+  }
+
+  private spawnChatBubble(userId: string, body: string, durationMs: number): void {
+    const sprite = this.players.get(userId);
+    if (!sprite) return;
+    const truncated = body.length > 80 ? `${body.slice(0, 77)}…` : body;
+    const bubble = this.add
+      .text(sprite.rect.x, sprite.rect.y - TILE - 4, truncated, {
+        fontFamily: 'Arial',
+        fontSize: 12,
+        color: '#ffffff',
+        backgroundColor: '#000000cc',
+        padding: { left: 6, right: 6, top: 3, bottom: 3 },
+        wordWrap: { width: 220 },
+        align: 'center',
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(1200);
+    // Follow sprite movement until destroyed.
+    const follow = this.time.addEvent({
+      delay: 50,
+      loop: true,
+      callback: () => {
+        bubble.x = sprite.rect.x;
+        bubble.y = sprite.rect.y - TILE - 4;
+      },
+    });
+    this.tweens.add({
+      targets: bubble,
+      alpha: 0,
+      delay: Math.max(0, durationMs - 500),
+      duration: 500,
+      onComplete: () => {
+        follow.remove();
+        bubble.destroy();
+      },
+    });
   }
 
   override update(_time: number, _delta: number): void {

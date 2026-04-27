@@ -1,5 +1,6 @@
 import { AUTO, Game, Scale, type Types } from 'phaser';
 import { Boot } from './scenes/Boot';
+import { ChatOverlay } from './scenes/ChatOverlay';
 import { EndScene } from './scenes/EndScene';
 import { GameWorld } from './scenes/GameWorld';
 import { Hud } from './scenes/Hud';
@@ -16,7 +17,7 @@ const config: Types.Core.GameConfig = {
     mode: Scale.FIT,
     autoCenter: Scale.CENTER_BOTH,
   },
-  scene: [Boot, LobbyBrowser, Lobby, GameWorld, Hud, EndScene],
+  scene: [Boot, LobbyBrowser, Lobby, GameWorld, Hud, ChatOverlay, EndScene],
 };
 
 const StartGame = (parent: string): Phaser.Game => {

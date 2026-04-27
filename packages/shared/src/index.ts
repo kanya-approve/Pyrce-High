@@ -9,6 +9,7 @@ export * from './state/inventory.js';
 export * from './state/match.js';
 export * from './state/profile.js';
 export * from './version.js';
+export * from './wire/chat.js';
 export * from './wire/combat.js';
 export * from './wire/inventory.js';
 export * from './wire/match.js';
