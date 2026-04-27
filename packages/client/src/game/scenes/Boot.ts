@@ -15,8 +15,10 @@ export class Boot extends Scene {
   }
 
   preload(): void {
-    // Atlas produced by tools/dmi-extract — Vite serves it from /public/atlases.
+    // Atlas + turf icon lookup produced by tools/dmi-extract — Vite serves
+    // them as static files under /public/atlases.
     this.load.atlas(ATLAS_KEY, ATLAS_PNG, ATLAS_JSON);
+    this.load.json('turf-icons', '/atlases/turf-icons.json');
   }
 
   create(): void {

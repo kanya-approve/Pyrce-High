@@ -50,7 +50,7 @@ interface GameWorldData {
 
 interface PlayerSprite {
   userId: string;
-  rect: Phaser.GameObjects.Image;
+  rect: Phaser.GameObjects.Sprite;
   outline: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
   hpBg: Phaser.GameObjects.Rectangle;
@@ -129,6 +129,7 @@ export class GameWorld extends Scene {
     const initialPlayers =
       (this.game.registry.get('gameWorld.players') as PublicPlayerInGame[]) ?? [];
 
+    this.registerCharacterAnims();
     this.buildMapTexture();
     this.add.image(0, 0, 'pyrce-map').setOrigin(0, 0);
 
@@ -483,6 +484,27 @@ export class GameWorld extends Scene {
     return null;
   }
 
+  /**
+   * Register one walk animation per cardinal direction. Keys:
+   * `male.walk.S`, `male.walk.N`, `male.walk.E`, `male.walk.W`.
+   * Played on `S2C_PLAYER_MOVED`; we let it run through one cycle and
+   * leave the sprite on the idle frame between steps.
+   */
+  private registerCharacterAnims(): void {
+    if (this.anims.exists('male.walk.S')) return;
+    for (const dir of ['S', 'N', 'E', 'W'] as const) {
+      this.anims.create({
+        key: `male.walk.${dir}`,
+        frames: [0, 1, 2, 3].map((f) => ({
+          key: ATLAS_KEY,
+          frame: `hair-overlays/MaleBase/_/${dir}/${f}`,
+        })),
+        frameRate: 10,
+        repeat: 0,
+      });
+    }
+  }
+
   private spawnPlayer(p: PublicPlayerInGame): void {
     const x = p.x * TILE + TILE / 2;
     const y = p.y * TILE + TILE / 2;
@@ -494,8 +516,7 @@ export class GameWorld extends Scene {
       .rectangle(x, y, TILE - 2, TILE - 2)
       .setStrokeStyle(2, ringColor, 0.7);
     const frame = CHARACTER_SPRITES.male[facingToCardinal(p.facing)];
-    const rect = this.add.image(x, y, ATLAS_KEY, frame);
-    if (frame.endsWith('/W/0')) rect.setScale(1, 1); // W frames already drawn left-facing
+    const rect = this.add.sprite(x, y, ATLAS_KEY, frame);
     const label = this.add
       .text(x, y - TILE / 2 - 4, p.username, {
         fontFamily: 'Arial',
@@ -613,9 +634,12 @@ export class GameWorld extends Scene {
     const targetX = x * TILE + TILE / 2;
     const targetY = y * TILE + TILE / 2;
     sprite.tween?.stop();
-    // Swap to the right facing frame instantly; the position tween handles motion.
-    const frame = CHARACTER_SPRITES.male[facingToCardinal(facing)];
-    sprite.rect.setFrame(frame);
+    const cardinal = facingToCardinal(facing);
+    sprite.rect.play(`male.walk.${cardinal}`, true);
+    // Hold the idle frame after the walk anim ends so we don't freeze mid-step.
+    sprite.rect.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+      sprite.rect.setFrame(CHARACTER_SPRITES.male[cardinal]);
+    });
     sprite.tween = this.tweens.add({
       targets: [sprite.rect, sprite.outline, sprite.label, sprite.hpBg, sprite.hpFill],
       x: (t: Phaser.GameObjects.GameObject) =>
@@ -698,13 +722,39 @@ export class GameWorld extends Scene {
     if (!ctx) return;
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
+
+    // Pull atlas image + per-tile-type frame lookup once.
+    const atlasTex = this.textures.get(ATLAS_KEY);
+    const atlasImg = atlasTex.getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+    const turfIcons = (this.cache.json.get('turf-icons') ?? {}) as Record<string, string>;
+    const frameByTileType: Array<Phaser.Textures.Frame | null> = this.map.tileTypes.map((tt) => {
+      const key = turfIcons[tt.path];
+      return key && atlasTex.has(key) ? atlasTex.get(key) : null;
+    });
+
     for (let y = 0; y < this.map.height; y++) {
       const row = this.map.grid[y] ?? [];
       for (let x = 0; x < this.map.width; x++) {
         const idx = row[x] ?? -1;
         const tt = idx >= 0 ? this.map.tileTypes[idx] : undefined;
-        ctx.fillStyle = colourFor(tt?.category ?? 'void');
-        ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+        const frame = idx >= 0 ? frameByTileType[idx] : null;
+        if (frame) {
+          // BYOND tiles are 32x32; our render TILE is 24. Scale on draw.
+          ctx.drawImage(
+            atlasImg,
+            frame.cutX,
+            frame.cutY,
+            frame.cutWidth,
+            frame.cutHeight,
+            x * TILE,
+            y * TILE,
+            TILE,
+            TILE,
+          );
+        } else {
+          ctx.fillStyle = colourFor(tt?.category ?? 'void');
+          ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+        }
       }
     }
     if (this.textures.exists('pyrce-map')) this.textures.remove('pyrce-map');
