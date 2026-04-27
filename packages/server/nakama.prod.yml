@@ -1,0 +1,27 @@
+name: pyrce-prod
+data_dir: /nakama/data
+
+logger:
+  stdout: true
+  level: INFO
+  format: JSON
+
+session:
+  token_expiry_sec: 86400
+  refresh_token_expiry_sec: 604800
+
+socket:
+  server_key: 'defaultkey'
+  port: 7350
+  protocol: tcp
+
+runtime:
+  path: /nakama/data/modules
+  js_entrypoint: index.js
+
+console:
+  port: 7351
+  username: admin
+
+metrics:
+  prometheus_port: 9100
