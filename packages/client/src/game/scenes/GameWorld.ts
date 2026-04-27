@@ -1,18 +1,31 @@
 import {
   type Facing,
+  ITEMS,
   OpCode,
+  type PublicGroundItem,
   type PublicPlayerInGame,
+  type S2CContainerContents,
+  type S2CCraftResult,
   type S2CInitialSnapshot,
+  type S2CInvDelta,
+  type S2CInvFull,
   type S2CPlayerMoved,
+  type S2CWorldGroundItemDelta,
+  type S2CWorldGroundItems,
   type TilemapJson,
 } from '@pyrce/shared';
 import tilemapData from '@pyrce/shared/src/content/tilemap/default.json' with { type: 'json' };
 import { Scene } from 'phaser';
 import type { NakamaMatchClient } from '../../net/matchClient';
+import {
+  applyDelta as applyInvDelta,
+  applyFull as applyInvFull,
+  type ClientInventory,
+  newClientInventory,
+} from '../../state/inventory';
 
 const TILE = 24;
 const MOVE_TWEEN_MS = 150;
-/** Minimum delay between move intents we'll send. Below = dropped. */
 const INPUT_THROTTLE_MS = 130;
 
 interface GameWorldData {
@@ -29,11 +42,12 @@ interface PlayerSprite {
   tween?: Phaser.Tweens.Tween;
 }
 
-/**
- * The actual playable scene. Renders the tilemap as a single canvas-backed
- * texture (cheap to draw once, fast to scroll), plus one rectangle per
- * player as a placeholder sprite. Real sprite atlases land in M7.
- */
+interface GroundSprite {
+  groundItemId: string;
+  data: PublicGroundItem;
+  dot: Phaser.GameObjects.Arc;
+}
+
 export class GameWorld extends Scene {
   private match!: NakamaMatchClient;
   private matchId!: string;
@@ -46,8 +60,27 @@ export class GameWorld extends Scene {
     S: Phaser.Input.Keyboard.Key;
     D: Phaser.Input.Keyboard.Key;
   };
+  private actionKeys!: {
+    E: Phaser.Input.Keyboard.Key;
+    G: Phaser.Input.Keyboard.Key;
+    C: Phaser.Input.Keyboard.Key;
+    I: Phaser.Input.Keyboard.Key;
+    ONE: Phaser.Input.Keyboard.Key;
+    TWO: Phaser.Input.Keyboard.Key;
+    THREE: Phaser.Input.Keyboard.Key;
+    FOUR: Phaser.Input.Keyboard.Key;
+    FIVE: Phaser.Input.Keyboard.Key;
+  };
   private lastInputAt = 0;
   private statusText?: Phaser.GameObjects.Text;
+  private inventory: ClientInventory = newClientInventory();
+  private groundSprites = new Map<string, GroundSprite>();
+  private containerHotspots: Array<{
+    id: string;
+    x: number;
+    y: number;
+    rect: Phaser.GameObjects.Rectangle;
+  }> = [];
 
   constructor() {
     super('GameWorld');
@@ -56,8 +89,8 @@ export class GameWorld extends Scene {
   init(data: GameWorldData): void {
     this.matchId = data.matchId;
     this.players.clear();
-    // Stash the initial player roster on the registry so create() can use it
-    // without re-typing the data through scene events.
+    this.groundSprites.clear();
+    this.inventory = newClientInventory();
     this.game.registry.set('gameWorld.players', data.players);
     this.game.registry.set('gameWorld.gameModeId', data.gameModeId);
   }
@@ -70,12 +103,11 @@ export class GameWorld extends Scene {
     this.buildMapTexture();
     this.add.image(0, 0, 'pyrce-map').setOrigin(0, 0);
 
-    // World bounds + camera follow.
     const worldW = this.map.width * TILE;
     const worldH = this.map.height * TILE;
     this.cameras.main.setBounds(0, 0, worldW, worldH);
-    this.physics?.world?.setBounds(0, 0, worldW, worldH);
 
+    this.renderContainerHotspots();
     for (const p of initialPlayers) this.spawnPlayer(p);
     const me = this.players.get(this.match.userId);
     if (me) this.cameras.main.startFollow(me.rect, true, 0.1, 0.1);
@@ -83,6 +115,18 @@ export class GameWorld extends Scene {
     if (this.input.keyboard) {
       this.cursors = this.input.keyboard.createCursorKeys();
       this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D') as typeof this.wasdKeys;
+      this.actionKeys = this.input.keyboard.addKeys(
+        'E,G,C,I,ONE,TWO,THREE,FOUR,FIVE',
+      ) as typeof this.actionKeys;
+      this.actionKeys.E.on('down', () => this.handleInteract());
+      this.actionKeys.G.on('down', () => this.handleDropEquipped());
+      this.actionKeys.C.on('down', () => this.handleCraft('spear'));
+      this.actionKeys.I.on('down', () => this.scene.get('Hud').events.emit('inv:refresh'));
+      this.actionKeys.ONE.on('down', () => this.handleHotkey(1));
+      this.actionKeys.TWO.on('down', () => this.handleHotkey(2));
+      this.actionKeys.THREE.on('down', () => this.handleHotkey(3));
+      this.actionKeys.FOUR.on('down', () => this.handleHotkey(4));
+      this.actionKeys.FIVE.on('down', () => this.handleHotkey(5));
     }
 
     this.statusText = this.add
@@ -96,11 +140,15 @@ export class GameWorld extends Scene {
       .setScrollFactor(0)
       .setDepth(1000);
 
+    // Persistent HUD overlay.
+    this.scene.launch('Hud', { inventory: () => this.inventory });
+
     this.match.onMatchData((msg) => this.handleMatchData(msg.op_code, msg.data));
   }
 
   shutdown(): void {
     this.match.onMatchData(() => {});
+    this.scene.stop('Hud');
   }
 
   override update(_time: number, _delta: number): void {
@@ -112,7 +160,137 @@ export class GameWorld extends Scene {
     void this.match.sendMatch(OpCode.C2S_MOVE_INTENT, { dir });
   }
 
-  // ---------- internals ----------
+  // ---------- input handlers ----------
+
+  private handleInteract(): void {
+    const me = this.players.get(this.match.userId)?.state;
+    if (!me) return;
+    // Pickup beats container open if both are at the player's tile.
+    for (const g of this.groundSprites.values()) {
+      if (g.data.x === me.x && g.data.y === me.y) {
+        void this.match.sendMatch(OpCode.C2S_INV_PICKUP, { groundItemId: g.data.groundItemId });
+        return;
+      }
+    }
+    // Otherwise: open the nearest container within Chebyshev 1.
+    let best: { x: number; y: number; dist: number } | null = null;
+    for (const c of this.containerHotspots) {
+      const dx = Math.abs(c.x - me.x);
+      const dy = Math.abs(c.y - me.y);
+      const d = Math.max(dx, dy);
+      if (d > 1) continue;
+      if (!best || d < best.dist) best = { x: c.x, y: c.y, dist: d };
+    }
+    if (best) {
+      void this.match.sendMatch(OpCode.C2S_CONTAINER_LOOK, { x: best.x, y: best.y });
+    }
+  }
+
+  private handleHotkey(slot: 1 | 2 | 3 | 4 | 5): void {
+    const ref = this.inventory.hotkeys[slot - 1];
+    if (!ref) return;
+    void this.match.sendMatch(OpCode.C2S_INV_USE, { instanceId: ref });
+  }
+
+  private handleDropEquipped(): void {
+    if (!this.inventory.equipped) return;
+    void this.match.sendMatch(OpCode.C2S_INV_DROP, { instanceId: this.inventory.equipped });
+  }
+
+  private handleCraft(recipeId: string): void {
+    void this.match.sendMatch(OpCode.C2S_INV_CRAFT, { recipeId });
+  }
+
+  // ---------- match-data dispatch ----------
+
+  private handleMatchData(op: number, data: string | Uint8Array): void {
+    switch (op) {
+      case OpCode.S2C_PLAYER_MOVED: {
+        const m = parsePayload<S2CPlayerMoved>(data);
+        if (!m) return;
+        const sprite = this.players.get(m.userId);
+        if (!sprite) {
+          this.spawnPlayer({
+            userId: m.userId,
+            username: m.userId,
+            x: m.x,
+            y: m.y,
+            facing: m.facing,
+          });
+          return;
+        }
+        this.moveSprite(sprite, m.x, m.y, m.facing);
+        break;
+      }
+      case OpCode.S2C_INITIAL_SNAPSHOT: {
+        const snap = parsePayload<S2CInitialSnapshot>(data);
+        if (!snap) return;
+        this.reseedPlayers(snap.players);
+        break;
+      }
+      case OpCode.S2C_INV_FULL: {
+        const f = parsePayload<S2CInvFull>(data);
+        if (!f) return;
+        applyInvFull(this.inventory, f);
+        this.notifyHud(`inventory: ${this.inventory.items.length} items`);
+        break;
+      }
+      case OpCode.S2C_INV_DELTA: {
+        const d = parsePayload<S2CInvDelta>(data);
+        if (!d) return;
+        applyInvDelta(this.inventory, d);
+        this.notifyHud(d.upserted ? `+${d.upserted[0]?.itemId ?? 'item'}` : 'inv updated');
+        break;
+      }
+      case OpCode.S2C_WORLD_GROUND_ITEMS: {
+        const f = parsePayload<S2CWorldGroundItems>(data);
+        if (!f) return;
+        for (const g of this.groundSprites.values()) g.dot.destroy();
+        this.groundSprites.clear();
+        for (const g of f.items) this.spawnGround(g);
+        break;
+      }
+      case OpCode.S2C_WORLD_GROUND_ITEM_DELTA: {
+        const d = parsePayload<S2CWorldGroundItemDelta>(data);
+        if (!d) return;
+        if (d.removed) for (const id of d.removed) this.despawnGround(id);
+        if (d.upserted) for (const g of d.upserted) this.spawnGround(g);
+        break;
+      }
+      case OpCode.S2C_CONTAINER_CONTENTS: {
+        const c = parsePayload<S2CContainerContents>(data);
+        if (!c) return;
+        // M3 quick UX: take everything we can fit, one at a time. A proper
+        // modal lands later. Hit `E` again to take more.
+        const top = c.container.contents[0];
+        if (top) {
+          this.notifyHud(
+            `take ${ITEMS[top.itemId]?.name ?? top.itemId} from ${c.container.kind.split('/').pop()}`,
+          );
+          void this.match.sendMatch(OpCode.C2S_CONTAINER_TAKE, {
+            containerId: c.container.containerId,
+            instanceId: top.instanceId,
+          });
+        } else {
+          this.notifyHud('container empty');
+        }
+        break;
+      }
+      case OpCode.S2C_CRAFT_RESULT: {
+        const r = parsePayload<S2CCraftResult>(data);
+        if (!r) return;
+        this.notifyHud(r.ok ? `crafted ${r.recipeId}` : `craft failed: ${r.error}`);
+        break;
+      }
+    }
+    this.scene.get('Hud').events.emit('inv:refresh');
+  }
+
+  private notifyHud(msg: string): void {
+    this.scene.get('Hud').events.emit('inv:notify', msg);
+  }
+
+  // ---------- rendering helpers ----------
 
   private statusLine(): string {
     const me = this.players.get(this.match.userId)?.state;
@@ -170,7 +348,7 @@ export class GameWorld extends Scene {
     sprite.tween?.stop();
     sprite.tween = this.tweens.add({
       targets: [sprite.rect, sprite.label],
-      x: (t: Phaser.GameObjects.GameObject) => (t === sprite.label ? targetX : targetX),
+      x: () => targetX,
       y: (t: Phaser.GameObjects.GameObject) =>
         t === sprite.label ? targetY - TILE / 2 - 4 : targetY,
       duration: MOVE_TWEEN_MS,
@@ -182,45 +360,56 @@ export class GameWorld extends Scene {
     }
   }
 
-  private handleMatchData(op: number, data: string | Uint8Array): void {
-    if (op === OpCode.S2C_PLAYER_MOVED) {
-      const m = parsePayload<S2CPlayerMoved>(data);
-      if (!m) return;
-      const sprite = this.players.get(m.userId);
-      if (!sprite) {
-        // First time we're hearing about this player — spawn at their reported position.
-        this.spawnPlayer({
-          userId: m.userId,
-          username: m.userId,
-          x: m.x,
-          y: m.y,
-          facing: m.facing,
-        });
-        return;
-      }
-      this.moveSprite(sprite, m.x, m.y, m.facing);
-    } else if (op === OpCode.S2C_INITIAL_SNAPSHOT) {
-      const snap = parsePayload<S2CInitialSnapshot>(data);
-      if (!snap) return;
-      // Reseed: drop sprites we no longer know about; add/update the rest.
-      const seen = new Set<string>();
-      for (const p of snap.players) {
-        seen.add(p.userId);
-        const existing = this.players.get(p.userId);
-        if (existing) this.moveSprite(existing, p.x, p.y, p.facing);
-        else this.spawnPlayer(p);
-      }
-      for (const id of Array.from(this.players.keys())) {
-        if (!seen.has(id)) this.despawnPlayer(id);
-      }
+  private reseedPlayers(roster: PublicPlayerInGame[]): void {
+    const seen = new Set<string>();
+    for (const p of roster) {
+      seen.add(p.userId);
+      const existing = this.players.get(p.userId);
+      if (existing) this.moveSprite(existing, p.x, p.y, p.facing);
+      else this.spawnPlayer(p);
+    }
+    for (const id of Array.from(this.players.keys())) {
+      if (!seen.has(id)) this.despawnPlayer(id);
     }
   }
 
-  /**
-   * Render the entire static tilemap into one DOM canvas, register as a
-   * Phaser texture, and display as a single image. Avoids 10k-rectangle
-   * scene overhead and gets free WebGL upload.
-   */
+  private spawnGround(g: PublicGroundItem): void {
+    const existing = this.groundSprites.get(g.groundItemId);
+    if (existing) {
+      existing.dot.destroy();
+      this.groundSprites.delete(g.groundItemId);
+    }
+    const cx = g.x * TILE + TILE / 2;
+    const cy = g.y * TILE + TILE / 2;
+    const dot = this.add.circle(cx, cy, 5, 0xffe066).setStrokeStyle(1, 0x000000).setDepth(2);
+    this.groundSprites.set(g.groundItemId, { groundItemId: g.groundItemId, data: g, dot });
+  }
+
+  private despawnGround(id: string): void {
+    const g = this.groundSprites.get(id);
+    if (!g) return;
+    g.dot.destroy();
+    this.groundSprites.delete(id);
+  }
+
+  private renderContainerHotspots(): void {
+    for (const c of this.map.containers) {
+      const cx = c.x * TILE + TILE / 2;
+      const cy = c.y * TILE + TILE / 2;
+      const rect = this.add
+        .rectangle(cx, cy, TILE - 8, TILE - 8, 0x886633, 0.55)
+        .setStrokeStyle(1, 0xccaa66, 0.7)
+        .setDepth(1);
+      // Synthesise a stable id from coords. Server uses a randomised id;
+      // the client identifies containers by coord here and the server
+      // resolves the actual containerId on the look response. Until we
+      // broadcast the manifest from the server, the smoke hits Look via
+      // the closest container by coord (server validates proximity).
+      const id = `c@${c.x},${c.y}`;
+      this.containerHotspots.push({ id, x: c.x, y: c.y, rect });
+    }
+  }
+
   private buildMapTexture(): void {
     const w = this.map.width * TILE;
     const h = this.map.height * TILE;

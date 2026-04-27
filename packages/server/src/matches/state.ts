@@ -1,4 +1,13 @@
-import type { Facing, MatchLabel, MatchPhase, PublicPlayerInGame } from '@pyrce/shared';
+import {
+  type Facing,
+  INITIAL_INVENTORY,
+  type InventoryState,
+  type MatchLabel,
+  type MatchPhase,
+  type PublicPlayerInGame,
+} from '@pyrce/shared';
+import type { ContainerInstance } from '../world/containers.js';
+import type { GroundItem } from '../world/groundItems.js';
 
 /**
  * In-memory match state owned by Nakama. Lives on the pod hosting the match;
@@ -17,6 +26,7 @@ export interface PlayerInGame {
   facing: Facing;
   /** Server tick of the last accepted move. Movement throttled by cooldown. */
   lastMoveTickN: number;
+  inventory: InventoryState;
 }
 
 export interface PyrceMatchState {
@@ -39,11 +49,41 @@ export interface PyrceMatchState {
   /** userId -> in-game state. Populated when phase enters InGame. */
   players: { [userId: string]: PlayerInGame };
 
+  /** groundItemId -> ground item state. Populated on InGame entry. */
+  groundItems: { [groundItemId: string]: GroundItem };
+
+  /** containerId -> container state. Seeded once on InGame entry. */
+  containers: { [containerId: string]: ContainerInstance };
+
   /** Tick counter, monotonically increasing. */
   tickN: number;
 
   /** Tick at which the match last had >0 presences (used for empty-reaping). */
   tickN_lastNonEmpty: number;
+}
+
+/** Build a fresh PlayerInGame, including a deep copy of the empty inventory. */
+export function newPlayerInGame(
+  userId: string,
+  username: string,
+  x: number,
+  y: number,
+): PlayerInGame {
+  return {
+    userId,
+    username,
+    x,
+    y,
+    facing: 'S',
+    lastMoveTickN: 0,
+    inventory: {
+      items: [],
+      hotkeys: [null, null, null, null, null],
+      equipped: null,
+      weight: 0,
+      weightCap: INITIAL_INVENTORY.weightCap,
+    },
+  };
 }
 
 export const TICK_RATE = 10; // Hz

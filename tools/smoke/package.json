@@ -6,7 +6,8 @@
   "description": "End-to-end smoke harnesses driving the running stack via the Nakama JS SDK",
   "scripts": {
     "m1": "node m1.mjs",
-    "m2": "node m2.mjs"
+    "m2": "node m2.mjs",
+    "m3": "node m3.mjs"
   },
   "dependencies": {
     "@heroiclabs/nakama-js": "^2.8.0",
