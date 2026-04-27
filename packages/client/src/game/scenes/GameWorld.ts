@@ -6,9 +6,11 @@ import {
   type PublicGroundItem,
   type PublicPlayerInGame,
   type S2CAnnouncement,
+  type S2CClockTick,
   type S2CContainerContents,
   type S2CCorpseSpawn,
   type S2CCraftResult,
+  type S2CGameResult,
   type S2CInitialSnapshot,
   type S2CInvDelta,
   type S2CInvFull,
@@ -17,6 +19,7 @@ import {
   type S2CPlayerHP,
   type S2CPlayerMoved,
   type S2CPlayerStamina,
+  type S2CRoleAssigned,
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
   type TilemapJson,
@@ -24,6 +27,7 @@ import {
 import tilemapData from '@pyrce/shared/src/content/tilemap/default.json' with { type: 'json' };
 import { Scene } from 'phaser';
 import type { NakamaMatchClient } from '../../net/matchClient';
+import { type ClientGameInfo, newClientGameInfo } from '../../state/game';
 import {
   applyDelta as applyInvDelta,
   applyFull as applyInvFull,
@@ -91,6 +95,7 @@ export class GameWorld extends Scene {
   private lastInputAt = 0;
   private statusText?: Phaser.GameObjects.Text;
   private inventory: ClientInventory = newClientInventory();
+  private gameInfo: ClientGameInfo = newClientGameInfo();
   private groundSprites = new Map<string, GroundSprite>();
   private containerHotspots: Array<{
     id: string;
@@ -110,6 +115,7 @@ export class GameWorld extends Scene {
     this.players.clear();
     this.groundSprites.clear();
     this.inventory = newClientInventory();
+    this.gameInfo = newClientGameInfo();
     this.game.registry.set('gameWorld.players', data.players);
     this.game.registry.set('gameWorld.gameModeId', data.gameModeId);
   }
@@ -161,7 +167,7 @@ export class GameWorld extends Scene {
       .setDepth(1000);
 
     // Persistent HUD overlay.
-    this.scene.launch('Hud', { inventory: () => this.inventory });
+    this.scene.launch('Hud', { inventory: () => this.inventory, game: () => this.gameInfo });
 
     this.match.onMatchData((msg) => this.handleMatchData(msg.op_code, msg.data));
   }
@@ -353,6 +359,30 @@ export class GameWorld extends Scene {
         const a = parsePayload<S2CAnnouncement>(data);
         if (!a) return;
         this.flashAnnouncement(a);
+        break;
+      }
+      case OpCode.S2C_PLAYER_ROLE_ASSIGNED: {
+        const r = parsePayload<S2CRoleAssigned>(data);
+        if (!r) return;
+        this.gameInfo.role = r;
+        this.notifyHud(`You are: ${r.roleName}`);
+        this.scene.get('Hud').events.emit('game:refresh');
+        break;
+      }
+      case OpCode.S2C_CLOCK_TICK: {
+        const c = parsePayload<S2CClockTick>(data);
+        if (!c) return;
+        this.gameInfo.clock = c;
+        this.scene.get('Hud').events.emit('game:refresh');
+        break;
+      }
+      case OpCode.S2C_GAME_RESULT: {
+        const r = parsePayload<S2CGameResult>(data);
+        if (!r) return;
+        this.gameInfo.result = r;
+        // Hand off to the EndScene; both GameWorld + Hud teardown.
+        this.scene.start('EndScene', { result: r });
+        this.scene.stop('Hud');
         break;
       }
     }

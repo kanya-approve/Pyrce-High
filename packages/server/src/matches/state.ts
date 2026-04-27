@@ -5,7 +5,9 @@ import {
   type MatchLabel,
   type MatchPhase,
   type PublicPlayerInGame,
+  type RoleId,
 } from '@pyrce/shared';
+import type { InGameClock } from '../mode.js';
 import type { ContainerInstance } from '../world/containers.js';
 import type { GroundItem } from '../world/groundItems.js';
 
@@ -38,6 +40,8 @@ export interface PlayerInGame {
   /** True name for body-discovery messaging — leak-safe; only revealed on death. */
   realName: string;
   inventory: InventoryState;
+  /** Assigned by the mode engine on Lobby→InGame. Default 'civilian'. */
+  roleId: RoleId;
 }
 
 /**
@@ -88,6 +92,12 @@ export interface PyrceMatchState {
   /** corpseId -> corpse. Persists for the round. */
   corpses: { [corpseId: string]: Corpse };
 
+  /** In-game clock; null until phase enters InGame. */
+  clock: InGameClock | null;
+
+  /** True once the win check has resolved; prevents double-broadcast. */
+  ended: boolean;
+
   /** Tick counter, monotonically increasing. */
   tickN: number;
 
@@ -116,7 +126,7 @@ export function newPlayerInGame(
     maxStamina: 100,
     isAlive: true,
     isWatching: false,
-    realName: username, // M5 will override with role-assigned realname
+    realName: username, // M5.x may override with role-assigned realname
     inventory: {
       items: [],
       hotkeys: [null, null, null, null, null],
@@ -124,6 +134,7 @@ export function newPlayerInGame(
       weight: 0,
       weightCap: INITIAL_INVENTORY.weightCap,
     },
+    roleId: 'civilian',
   };
 }
 

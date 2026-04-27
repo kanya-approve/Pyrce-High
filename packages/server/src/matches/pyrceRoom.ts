@@ -15,16 +15,21 @@ import {
   type C2STakeFromCorpse,
   DIRECTION_DELTAS,
   type Facing,
+  getMode,
   MatchPhase,
   OpCode,
   type PublicCorpse,
   type PublicGroundItem,
+  ROLES,
+  type RoleId,
   type S2CAnnouncement,
+  type S2CClockTick,
   type S2CContainerContents,
   type S2CCorpseContents,
   type S2CCorpseDespawn,
   type S2CCorpseSpawn,
   type S2CCraftResult,
+  type S2CGameResult,
   type S2CInitialSnapshot,
   type S2CInvDelta,
   type S2CInvFull,
@@ -34,12 +39,22 @@ import {
   type S2CPlayerHP,
   type S2CPlayerMoved,
   type S2CPlayerStamina,
+  type S2CRoleAssigned,
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
   WIRE_PROTOCOL_VERSION,
 } from '@pyrce/shared';
 import { checkBodyDiscoveries, regenStamina, resolveAttack } from '../combat.js';
 import { addItem, craft, findInstance, removeItem, setEquipped, setHotkey } from '../inventory.js';
+import {
+  applyItemGrants,
+  assignRoles,
+  buildReveals,
+  evaluateWinConditions,
+  formatGameClock,
+  newClock,
+  totalGameMinutes,
+} from '../mode.js';
 import { type ContainerInstance, seedContainers } from '../world/containers.js';
 import { fromInstance } from '../world/groundItems.js';
 import { tilemap } from '../world/tilemap.js';
@@ -86,6 +101,8 @@ export function matchInit(
     groundItems: {},
     containers: {},
     corpses: {},
+    clock: null,
+    ended: false,
     tickN: 0,
     tickN_lastNonEmpty: 0,
   };
@@ -206,6 +223,38 @@ export function matchLoop(
     broadcastCorpseUpdate(dispatcher, c);
   }
 
+  // Game clock + win check: only relevant once we've entered InGame and
+  // we haven't already broadcast a result.
+  if (state.phase === MatchPhase.InGame && state.clock && !state.ended) {
+    const gameMinutes = totalGameMinutes(state.clock, tick, TICK_RATE);
+    const formatted = formatGameClock(gameMinutes);
+    const intMinute = Math.floor(gameMinutes);
+    if (intMinute !== state.clock.lastBroadcastMinute) {
+      state.clock.lastBroadcastMinute = intMinute;
+      broadcastClock(dispatcher, formatted);
+    }
+    const modeDef = getMode(state.gameModeId ?? '');
+    if (modeDef) {
+      const result = evaluateWinConditions(state, modeDef, gameMinutes);
+      if (result) {
+        state.ended = true;
+        state.phase = MatchPhase.Ending;
+        const reveals = buildReveals(state);
+        const winnerIds = new Set(result.winners.map((p) => p.userId));
+        const payload: S2CGameResult = {
+          modeId: modeDef.id,
+          reason: result.reason,
+          summary: result.summary,
+          reveals,
+          winners: reveals.filter((r) => winnerIds.has(r.userId)),
+        };
+        broadcastGameResult(dispatcher, payload);
+        refreshLabel(dispatcher, state);
+        logger.info('round end: %s — %s', result.reason, result.summary);
+      }
+    }
+  }
+
   return { state };
 }
 
@@ -312,15 +361,37 @@ function handleStartGame(
     }
   }
   state.gameModeId = req.gameModeId ?? 'normal';
+  const modeDef = getMode(state.gameModeId);
+  if (!modeDef) {
+    sendError(dispatcher, m.sender, 'unknown_mode', `mode ${state.gameModeId} not registered`);
+    return;
+  }
+  if (countPresences(state) < modeDef.minPlayers) {
+    sendError(
+      dispatcher,
+      m.sender,
+      'too_few_players',
+      `${modeDef.displayName} needs ${modeDef.minPlayers}+`,
+    );
+    return;
+  }
   state.phase = MatchPhase.InGame;
   assignSpawns(state);
   state.containers = seedContainers();
   state.groundItems = {};
+  state.corpses = {};
+  state.ended = false;
+  // Mode engine: assign roles + grant starting items.
+  assignRoles(state, modeDef);
+  applyItemGrants(state, modeDef, logger);
+  state.clock = newClock(state.tickN);
   broadcastPhaseChange(dispatcher, state);
   for (const userId in state.presences) {
     const p = state.presences[userId];
-    if (p) {
+    const player = state.players[userId];
+    if (p && player) {
       sendInvFull(dispatcher, state, p);
+      sendRoleAssigned(dispatcher, p, player);
     }
   }
   sendGroundItemsFull(dispatcher, state, null);
@@ -388,10 +459,11 @@ function handleInvPickup(
     sendError(dispatcher, m.sender, 'too_far', 'item not adjacent');
     return;
   }
-  const inst = addItem(player.inventory, ground.itemId, ground.count, ground.data);
-  if (!inst) return;
+  const r = addItem(player.inventory, ground.itemId, ground.count, ground.data);
+  if (!r) return;
+  player.inventory = r.inventory;
   delete state.groundItems[req.groundItemId];
-  sendInvDelta(dispatcher, state, m.sender, { upserted: [inst], weight: player.inventory.weight });
+  sendInvDelta(dispatcher, state, m.sender, { upserted: [r.instance], weight: r.inventory.weight });
   broadcastGroundItemDelta(dispatcher, { removed: [req.groundItemId] });
 }
 
@@ -405,15 +477,16 @@ function handleInvDrop(
   if (!player) return;
   const req = parseBody<C2SInvDrop>(m.data);
   if (!req) return;
-  const removed = removeItem(player.inventory, req.instanceId);
-  if (!removed) return;
-  const ground = fromInstance(removed, player.x, player.y);
+  const r = removeItem(player.inventory, req.instanceId);
+  if (!r) return;
+  player.inventory = r.inventory;
+  const ground = fromInstance(r.removed, player.x, player.y);
   state.groundItems[ground.groundItemId] = ground;
   sendInvDelta(dispatcher, state, m.sender, {
     removed: [req.instanceId],
-    hotkeys: player.inventory.hotkeys,
-    equipped: player.inventory.equipped,
-    weight: player.inventory.weight,
+    hotkeys: r.inventory.hotkeys,
+    equipped: r.inventory.equipped,
+    weight: r.inventory.weight,
   });
   broadcastGroundItemDelta(dispatcher, { upserted: [toPublicGroundItem(ground)] });
 }
@@ -428,11 +501,13 @@ function handleInvEquip(
   if (!player) return;
   const req = parseBody<C2SInvEquip>(m.data);
   if (!req) return;
-  if (!setEquipped(player.inventory, req.instanceId)) {
+  const e = setEquipped(player.inventory, req.instanceId);
+  if (!e) {
     sendError(dispatcher, m.sender, 'no_such_instance', 'cannot equip');
     return;
   }
-  sendInvDelta(dispatcher, state, m.sender, { equipped: player.inventory.equipped });
+  player.inventory = e;
+  sendInvDelta(dispatcher, state, m.sender, { equipped: e.equipped });
 }
 
 function handleInvSetHotkey(
@@ -446,11 +521,13 @@ function handleInvSetHotkey(
   const req = parseBody<C2SInvSetHotkey>(m.data);
   if (!req) return;
   if (req.slot < 1 || req.slot > 5) return;
-  if (!setHotkey(player.inventory, req.slot, req.instanceId)) {
+  const h = setHotkey(player.inventory, req.slot, req.instanceId);
+  if (!h) {
     sendError(dispatcher, m.sender, 'no_such_instance', 'cannot bind hotkey');
     return;
   }
-  sendInvDelta(dispatcher, state, m.sender, { hotkeys: player.inventory.hotkeys });
+  player.inventory = h;
+  sendInvDelta(dispatcher, state, m.sender, { hotkeys: h.hotkeys });
 }
 
 function handleInvUse(
@@ -483,10 +560,9 @@ function handleInvCraft(
   const req = parseBody<C2SInvCraft>(m.data);
   if (!req) return;
   const result = craft(player.inventory, req.recipeId);
-  const payload: S2CCraftResult =
-    result.ok && result.output
-      ? { ok: true, recipeId: req.recipeId, instanceId: result.output.instanceId }
-      : { ok: false, recipeId: req.recipeId, error: result.error ?? 'craft_failed' };
+  const payload: S2CCraftResult = result.ok
+    ? { ok: true, recipeId: req.recipeId, instanceId: result.output.instanceId }
+    : { ok: false, recipeId: req.recipeId, error: result.error };
   dispatcher.broadcastMessage(
     OpCode.S2C_CRAFT_RESULT,
     JSON.stringify(payload),
@@ -495,6 +571,7 @@ function handleInvCraft(
     true,
   );
   if (result.ok) {
+    player.inventory = result.inventory;
     sendInvFull(dispatcher, state, m.sender);
   }
 }
@@ -544,18 +621,17 @@ function handleContainerTake(
   const c = state.containers[req.containerId];
   if (!c) return;
   if (!withinContainerRange(player, c)) return;
-  const idx = c.contents.findIndex((it) => it.instanceId === req.instanceId);
-  if (idx === -1) return;
-  const taken = c.contents[idx];
+  const taken = c.contents.find((it) => it.instanceId === req.instanceId);
   if (!taken) return;
-  c.contents.splice(idx, 1);
-  const inst = addItem(player.inventory, taken.itemId, taken.count, taken.data);
-  if (!inst) {
-    // shouldn't happen — restore and bail
-    c.contents.push(taken);
-    return;
-  }
-  sendInvDelta(dispatcher, state, m.sender, { upserted: [inst], weight: player.inventory.weight });
+  const r = addItem(player.inventory, taken.itemId, taken.count, taken.data);
+  if (!r) return;
+  player.inventory = r.inventory;
+  // Whole-array replacement (Goja proxy quirk).
+  c.contents = c.contents.filter((it) => it.instanceId !== req.instanceId);
+  sendInvDelta(dispatcher, state, m.sender, {
+    upserted: [r.instance],
+    weight: r.inventory.weight,
+  });
   sendContainerContents(dispatcher, m.sender, c);
 }
 
@@ -572,14 +648,16 @@ function handleContainerPut(
   const c = state.containers[req.containerId];
   if (!c) return;
   if (!withinContainerRange(player, c)) return;
-  const removed = removeItem(player.inventory, req.instanceId);
-  if (!removed) return;
-  c.contents.push(removed);
+  const r = removeItem(player.inventory, req.instanceId);
+  if (!r) return;
+  player.inventory = r.inventory;
+  // Whole-array replacement (Goja proxy quirk).
+  c.contents = [...c.contents, r.removed];
   sendInvDelta(dispatcher, state, m.sender, {
     removed: [req.instanceId],
-    hotkeys: player.inventory.hotkeys,
-    equipped: player.inventory.equipped,
-    weight: player.inventory.weight,
+    hotkeys: r.inventory.hotkeys,
+    equipped: r.inventory.equipped,
+    weight: r.inventory.weight,
   });
   sendContainerContents(dispatcher, m.sender, c);
 }
@@ -674,19 +752,15 @@ function handleTakeFromCorpse(
   const c = state.corpses[req.corpseId];
   if (!c) return;
   if (Math.max(Math.abs(player.x - c.x), Math.abs(player.y - c.y)) > 1) return;
-  const idx = c.contents.findIndex((it) => it.instanceId === req.instanceId);
-  if (idx === -1) return;
-  const taken = c.contents[idx];
+  const taken = c.contents.find((it) => it.instanceId === req.instanceId);
   if (!taken) return;
-  c.contents.splice(idx, 1);
   const added = addItem(player.inventory, taken.itemId, taken.count, taken.data);
-  if (!added) {
-    c.contents.push(taken);
-    return;
-  }
+  if (!added) return;
+  player.inventory = added.inventory;
+  c.contents = c.contents.filter((it) => it.instanceId !== req.instanceId);
   sendInvDelta(dispatcher, state, m.sender, {
-    upserted: [added],
-    weight: player.inventory.weight,
+    upserted: [added.instance],
+    weight: added.inventory.weight,
   });
   // Echo the corpse contents so the client UI updates.
   const payload: S2CCorpseContents = { corpseId: c.corpseId, contents: c.contents };
@@ -896,6 +970,43 @@ function broadcastAnnouncement(
   payload: S2CAnnouncement,
 ): void {
   dispatcher.broadcastMessage(OpCode.S2C_ANNOUNCEMENT, JSON.stringify(payload), null, null, true);
+}
+
+function sendRoleAssigned(
+  dispatcher: nkruntime.MatchDispatcher,
+  recipient: nkruntime.Presence,
+  player: PlayerInGame,
+): void {
+  const role = ROLES[player.roleId as RoleId];
+  const payload: S2CRoleAssigned = {
+    roleId: player.roleId as RoleId,
+    roleName: role.name,
+    description: role.description,
+    realName: player.realName,
+  };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_PLAYER_ROLE_ASSIGNED,
+    JSON.stringify(payload),
+    [recipient],
+    null,
+    true,
+  );
+}
+
+function broadcastClock(
+  dispatcher: nkruntime.MatchDispatcher,
+  formatted: ReturnType<typeof formatGameClock>,
+): void {
+  const payload: S2CClockTick = {
+    gameHour: formatted.hour12,
+    ampm: formatted.ampm,
+    hoursLeft: formatted.hoursLeft,
+  };
+  dispatcher.broadcastMessage(OpCode.S2C_CLOCK_TICK, JSON.stringify(payload), null, null, true);
+}
+
+function broadcastGameResult(dispatcher: nkruntime.MatchDispatcher, payload: S2CGameResult): void {
+  dispatcher.broadcastMessage(OpCode.S2C_GAME_RESULT, JSON.stringify(payload), null, null, true);
 }
 
 function sendInitialSnapshot(

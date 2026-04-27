@@ -1,4 +1,6 @@
 export * from './content/items.js';
+export * from './content/modes.js';
+export * from './content/roles.js';
 export * from './content/tilemap.js';
 export * from './enums.js';
 export * from './ids.js';
@@ -10,4 +12,5 @@ export * from './version.js';
 export * from './wire/combat.js';
 export * from './wire/inventory.js';
 export * from './wire/match.js';
+export * from './wire/mode.js';
 export * from './wire/rpc.js';

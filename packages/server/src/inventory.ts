@@ -30,34 +30,51 @@ export function newInstanceId(): ItemInstanceId {
   return `${part()}${part()}${part()}` as ItemInstanceId;
 }
 
-export function recomputeWeight(inv: InventoryState): void {
+/**
+ * Goja-on-Nakama gotcha: the match-state object is wrapped in a Go-side
+ * proxy. **Top-level property assignment** propagates through (`pp.x = y`),
+ * but **nested array / object mutation** is silently dropped (`pp.list.push(x)`,
+ * `pp.obj.k = v`). So our inventory helpers MUST be pure: they take an
+ * inventory + return a new one. Callers do `player.inventory = result.inv`
+ * — that single assignment is what survives the proxy round-trip.
+ */
+
+export function computeWeight(items: ReadonlyArray<ItemInstance>): number {
   let w = 0;
-  for (const it of inv.items) {
+  for (const it of items) {
     const def = ITEMS[it.itemId];
     if (def) w += def.weight * it.count;
   }
-  inv.weight = Math.round(w * 10) / 10;
+  return Math.round(w * 10) / 10;
+}
+
+export interface AddItemResult {
+  inventory: InventoryState;
+  instance: ItemInstance;
 }
 
 /**
- * Add an item to the inventory. For stackables, merges into the first
- * existing stack of the same itemId. Returns the resulting instance id
- * (existing for stack-merge, new for non-stack).
+ * Add an item. For stackables, merges into the first existing stack of the
+ * same itemId. Returns the new inventory + the resulting instance (existing
+ * for stack-merge, new for non-stack).
  */
 export function addItem(
   inv: InventoryState,
   itemId: string,
   count: number,
   data?: Record<string, unknown>,
-): ItemInstance | null {
+): AddItemResult | null {
   const def = ITEMS[itemId];
   if (!def) return null;
   if (def.stackable) {
     for (const it of inv.items) {
       if (it.itemId === itemId) {
-        it.count += count;
-        recomputeWeight(inv);
-        return it;
+        const merged: ItemInstance = { ...it, count: it.count + count };
+        const newItems = inv.items.map((x) => (x.instanceId === it.instanceId ? merged : x));
+        return {
+          inventory: { ...inv, items: newItems, weight: computeWeight(newItems) },
+          instance: merged,
+        };
       }
     }
   }
@@ -67,47 +84,43 @@ export function addItem(
     count,
     ...(data ? { data } : {}),
   };
-  inv.items.push(inst);
-  recomputeWeight(inv);
-  return inst;
+  const newItems = [...inv.items, inst];
+  return {
+    inventory: { ...inv, items: newItems, weight: computeWeight(newItems) },
+    instance: inst,
+  };
+}
+
+export interface RemoveItemResult {
+  inventory: InventoryState;
+  removed: ItemInstance;
 }
 
 /**
- * Remove a specific instance entirely. Returns the removed instance, or
- * null if not found. Also clears any hotkey slot pointing at it and
+ * Remove a specific instance entirely. Returns the new inventory + the
+ * removed instance. Also clears any hotkey slot pointing at it and
  * un-equips it if equipped.
  */
-export function removeItem(inv: InventoryState, instanceId: ItemInstanceId): ItemInstance | null {
-  const idx = inv.items.findIndex((it) => it.instanceId === instanceId);
-  if (idx === -1) return null;
-  const removed = inv.items[idx];
-  if (!removed) return null;
-  inv.items.splice(idx, 1);
-  for (let i = 0; i < inv.hotkeys.length; i++) {
-    if (inv.hotkeys[i] === instanceId) inv.hotkeys[i] = null;
-  }
-  if (inv.equipped === instanceId) inv.equipped = null;
-  recomputeWeight(inv);
-  return removed;
-}
-
-/**
- * Decrement a stackable item's count by `amount`. If count drops to 0,
- * removes the instance entirely.
- */
-export function decrementStack(
+export function removeItem(
   inv: InventoryState,
   instanceId: ItemInstanceId,
-  amount: number,
-): ItemInstance | null {
-  const it = inv.items.find((x) => x.instanceId === instanceId);
-  if (!it) return null;
-  it.count -= amount;
-  if (it.count <= 0) {
-    return removeItem(inv, instanceId);
-  }
-  recomputeWeight(inv);
-  return it;
+): RemoveItemResult | null {
+  const removed = inv.items.find((it) => it.instanceId === instanceId);
+  if (!removed) return null;
+  const newItems = inv.items.filter((it) => it.instanceId !== instanceId);
+  const newHotkeys = inv.hotkeys.map((slot) =>
+    slot === instanceId ? null : slot,
+  ) as InventoryState['hotkeys'];
+  return {
+    inventory: {
+      ...inv,
+      items: newItems,
+      hotkeys: newHotkeys,
+      equipped: inv.equipped === instanceId ? null : inv.equipped,
+      weight: computeWeight(newItems),
+    },
+    removed,
+  };
 }
 
 export function findInstance(
@@ -121,52 +134,48 @@ export function setHotkey(
   inv: InventoryState,
   slot: 1 | 2 | 3 | 4 | 5,
   instanceId: ItemInstanceId | null,
-): boolean {
-  if (instanceId !== null && !findInstance(inv, instanceId)) return false;
-  inv.hotkeys[slot - 1] = instanceId;
-  return true;
+): InventoryState | null {
+  if (instanceId !== null && !findInstance(inv, instanceId)) return null;
+  const newHotkeys = inv.hotkeys.slice() as InventoryState['hotkeys'];
+  newHotkeys[slot - 1] = instanceId;
+  return { ...inv, hotkeys: newHotkeys };
 }
 
-export function setEquipped(inv: InventoryState, instanceId: ItemInstanceId | null): boolean {
-  if (instanceId === null) {
-    inv.equipped = null;
-    return true;
-  }
-  if (!findInstance(inv, instanceId)) return false;
-  inv.equipped = instanceId;
-  return true;
+export function setEquipped(
+  inv: InventoryState,
+  instanceId: ItemInstanceId | null,
+): InventoryState | null {
+  if (instanceId !== null && !findInstance(inv, instanceId)) return null;
+  return { ...inv, equipped: instanceId };
 }
 
 // ---------- Crafting ----------
 
-export interface CraftAttempt {
-  ok: boolean;
-  recipe: RecipeDef | null;
-  /** Resolved instance ids consumed (for atomic rollback if needed). */
-  consumedInstanceIds: ItemInstanceId[];
-  output: ItemInstance | null;
-  error?: string;
-}
-
 /**
  * Attempt to craft. Iterates the recipe's `inputs` and verifies each
- * required item id is present in sufficient quantity (across stacks for
- * stackable items, across distinct instances for non-stackable). On
- * success, removes the consumed instances and adds the output.
+ * required item id is present in sufficient quantity. On success, returns
+ * the new inventory with the consumed instances removed + output added.
  */
+export interface CraftSuccess {
+  ok: true;
+  recipe: RecipeDef;
+  consumedInstanceIds: ItemInstanceId[];
+  output: ItemInstance;
+  inventory: InventoryState;
+}
+export interface CraftFailure {
+  ok: false;
+  recipe: RecipeDef | null;
+  error: string;
+}
+export type CraftAttempt = CraftSuccess | CraftFailure;
+
 export function craft(inv: InventoryState, recipeId: string): CraftAttempt {
   const recipe = RECIPES_BY_ID[recipeId];
   if (!recipe) {
-    return {
-      ok: false,
-      recipe: null,
-      consumedInstanceIds: [],
-      output: null,
-      error: 'unknown_recipe',
-    };
+    return { ok: false, recipe: null, error: 'unknown_recipe' };
   }
 
-  // First pass: choose which instances we'll consume.
   const consume: ItemInstanceId[] = [];
   for (const [itemId, needCount] of Object.entries(recipe.inputs)) {
     let remaining = needCount;
@@ -178,27 +187,25 @@ export function craft(inv: InventoryState, recipeId: string): CraftAttempt {
       if (remaining <= 0) break;
     }
     if (remaining > 0) {
-      return {
-        ok: false,
-        recipe,
-        consumedInstanceIds: [],
-        output: null,
-        error: `missing_${itemId}`,
-      };
+      return { ok: false, recipe, error: `missing_${itemId}` };
     }
   }
 
-  // Second pass: actually consume + add output.
-  for (const id of consume) removeItem(inv, id);
-  const output = addItem(inv, recipe.output, 1);
-  if (!output) {
-    return {
-      ok: false,
-      recipe,
-      consumedInstanceIds: consume,
-      output: null,
-      error: 'output_missing',
-    };
+  let next = inv;
+  for (const id of consume) {
+    const r = removeItem(next, id);
+    if (!r) return { ok: false, recipe, error: `missing_${id}` };
+    next = r.inventory;
   }
-  return { ok: true, recipe, consumedInstanceIds: consume, output };
+  const added = addItem(next, recipe.output, 1);
+  if (!added) {
+    return { ok: false, recipe, error: 'output_missing' };
+  }
+  return {
+    ok: true,
+    recipe,
+    consumedInstanceIds: consume,
+    output: added.instance,
+    inventory: added.inventory,
+  };
 }

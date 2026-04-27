@@ -1,9 +1,11 @@
 import { ITEMS, type ItemDef } from '@pyrce/shared';
 import { Scene } from 'phaser';
+import type { ClientGameInfo } from '../../state/game';
 import type { ClientInventory } from '../../state/inventory';
 
 interface HudData {
   inventory: () => ClientInventory;
+  game: () => ClientGameInfo;
 }
 
 /**
@@ -13,7 +15,10 @@ interface HudData {
  */
 export class Hud extends Scene {
   private getInventory!: () => ClientInventory;
+  private getGame!: () => ClientGameInfo;
   private invText!: Phaser.GameObjects.Text;
+  private roleText!: Phaser.GameObjects.Text;
+  private clockText!: Phaser.GameObjects.Text;
   private notif!: Phaser.GameObjects.Text;
   private notifTimer?: Phaser.Time.TimerEvent;
 
@@ -23,6 +28,7 @@ export class Hud extends Scene {
 
   init(data: HudData): void {
     this.getInventory = data.inventory;
+    this.getGame = data.game;
   }
 
   create(): void {
@@ -37,6 +43,30 @@ export class Hud extends Scene {
         padding: { left: 6, right: 6, top: 4, bottom: 4 },
       })
       .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1000);
+
+    this.roleText = this.add
+      .text(width / 2, 12, '', {
+        fontFamily: 'Arial Black',
+        fontSize: 14,
+        color: '#ffd866',
+        backgroundColor: '#000000aa',
+        padding: { left: 8, right: 8, top: 4, bottom: 4 },
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1000);
+
+    this.clockText = this.add
+      .text(width / 2, 38, '', {
+        fontFamily: 'Courier New',
+        fontSize: 14,
+        color: '#aaaaaa',
+        backgroundColor: '#000000aa',
+        padding: { left: 8, right: 8, top: 2, bottom: 2 },
+      })
+      .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1000);
 
@@ -72,8 +102,26 @@ export class Hud extends Scene {
 
     this.events.on('inv:refresh', () => this.render());
     this.events.on('inv:notify', (msg: string) => this.flash(msg));
+    this.events.on('game:refresh', () => this.renderGame());
 
     this.render();
+    this.renderGame();
+  }
+
+  private renderGame(): void {
+    const g = this.getGame();
+    if (g.role) {
+      this.roleText.setText(`You are: ${g.role.roleName}`);
+    } else {
+      this.roleText.setText('');
+    }
+    if (g.clock) {
+      this.clockText.setText(
+        `${String(g.clock.gameHour).padStart(2, '0')}:00 ${g.clock.ampm}  · ${g.clock.hoursLeft.toFixed(1)}h to dawn`,
+      );
+    } else {
+      this.clockText.setText('');
+    }
   }
 
   private flash(msg: string): void {

@@ -107,10 +107,14 @@ export function resolveAttack(
       };
       victim.isAlive = false;
       victim.isWatching = true;
-      victim.inventory.items = [];
-      victim.inventory.hotkeys = [null, null, null, null, null];
-      victim.inventory.equipped = null;
-      victim.inventory.weight = 0;
+      // Whole-object replacement (Goja proxy quirk — see inventory.ts).
+      victim.inventory = {
+        items: [],
+        hotkeys: [null, null, null, null, null],
+        equipped: null,
+        weight: 0,
+        weightCap: victim.inventory.weightCap,
+      };
       result.killed = true;
       result.corpse = corpse;
     } else {
