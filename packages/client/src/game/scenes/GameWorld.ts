@@ -1,7 +1,12 @@
 import {
   ATLAS_KEY,
   CHARACTER_SPRITES,
+  CONTAINER_SPRITES,
+  DOOR_SPRITES,
   type Facing,
+  HAIR_OPTIONS_MALE,
+  hairFrame,
+  hairWalkFrames,
   ITEM_SPRITES,
   ITEMS,
   OpCode,
@@ -51,6 +56,8 @@ interface GameWorldData {
 interface PlayerSprite {
   userId: string;
   rect: Phaser.GameObjects.Sprite;
+  hair: Phaser.GameObjects.Sprite;
+  hairId: string;
   outline: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
   hpBg: Phaser.GameObjects.Rectangle;
@@ -68,7 +75,7 @@ interface GroundSprite {
 interface CorpseSprite {
   corpseId: string;
   data: PublicCorpse;
-  rect: Phaser.GameObjects.Rectangle;
+  rect: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
 }
 
@@ -105,7 +112,7 @@ export class GameWorld extends Scene {
     id: string;
     x: number;
     y: number;
-    rect: Phaser.GameObjects.Rectangle;
+    rect: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle;
   }> = [];
   private corpseSprites = new Map<string, CorpseSprite>();
   private deathOverlay?: Phaser.GameObjects.Rectangle;
@@ -138,6 +145,7 @@ export class GameWorld extends Scene {
     this.cameras.main.setBounds(0, 0, worldW, worldH);
 
     this.renderContainerHotspots();
+    this.renderDoors();
     for (const p of initialPlayers) this.spawnPlayer(p);
     const me = this.players.get(this.match.userId);
     if (me) this.cameras.main.startFollow(me.rect, true, 0.1, 0.1);
@@ -492,6 +500,7 @@ export class GameWorld extends Scene {
    */
   private registerCharacterAnims(): void {
     if (this.anims.exists('male.walk.S')) return;
+    const atlasTex = this.textures.get(ATLAS_KEY);
     for (const dir of ['S', 'N', 'E', 'W'] as const) {
       this.anims.create({
         key: `male.walk.${dir}`,
@@ -502,7 +511,26 @@ export class GameWorld extends Scene {
         frameRate: 10,
         repeat: 0,
       });
+      // One walk anim per (hair, dir). Skip hairs whose frames aren't packed
+      // in the atlas (some male option names don't exist as DMIs).
+      for (const hair of HAIR_OPTIONS_MALE) {
+        const frames = hairWalkFrames(hair, dir).filter((k) => atlasTex.has(k));
+        if (frames.length === 0) continue;
+        this.anims.create({
+          key: `hair.${hair}.walk.${dir}`,
+          frames: frames.map((k) => ({ key: ATLAS_KEY, frame: k })),
+          frameRate: 10,
+          repeat: 0,
+        });
+      }
     }
+  }
+
+  /** Stable hair pick from userId so the same player looks the same each round. */
+  private pickHair(userId: string): string {
+    let h = 0;
+    for (let i = 0; i < userId.length; i++) h = (h * 31 + userId.charCodeAt(i)) >>> 0;
+    return HAIR_OPTIONS_MALE[h % HAIR_OPTIONS_MALE.length] ?? 'BlackBoyHair';
   }
 
   private spawnPlayer(p: PublicPlayerInGame): void {
@@ -515,8 +543,15 @@ export class GameWorld extends Scene {
     const outline = this.add
       .rectangle(x, y, TILE - 2, TILE - 2)
       .setStrokeStyle(2, ringColor, 0.7);
-    const frame = CHARACTER_SPRITES.male[facingToCardinal(p.facing)];
+    const cardinal = facingToCardinal(p.facing);
+    const frame = CHARACTER_SPRITES.male[cardinal];
     const rect = this.add.sprite(x, y, ATLAS_KEY, frame);
+    const hairId = this.pickHair(p.userId);
+    const hairFr = hairFrame(hairId, cardinal);
+    const atlasTex = this.textures.get(ATLAS_KEY);
+    const hair = this.add
+      .sprite(x, y, ATLAS_KEY, atlasTex.has(hairFr) ? hairFr : frame)
+      .setDepth(rect.depth + 0.01);
     const label = this.add
       .text(x, y - TILE / 2 - 4, p.username, {
         fontFamily: 'Arial',
@@ -533,7 +568,17 @@ export class GameWorld extends Scene {
     const hpFill = this.add
       .rectangle(x - (TILE - 4) / 2, y - TILE / 2 - 18, TILE - 4, 4, 0x55ff55)
       .setOrigin(0, 1);
-    const sprite: PlayerSprite = { userId: p.userId, rect, outline, label, hpBg, hpFill, state: p };
+    const sprite: PlayerSprite = {
+      userId: p.userId,
+      rect,
+      hair,
+      hairId,
+      outline,
+      label,
+      hpBg,
+      hpFill,
+      state: p,
+    };
     this.players.set(p.userId, sprite);
     this.updateHpBar(sprite);
   }
@@ -543,6 +588,7 @@ export class GameWorld extends Scene {
     if (!sprite) return;
     sprite.tween?.stop();
     sprite.rect.destroy();
+    sprite.hair.destroy();
     sprite.outline.destroy();
     sprite.label.destroy();
     sprite.hpBg.destroy();
@@ -568,10 +614,19 @@ export class GameWorld extends Scene {
     }
     const x = c.x * TILE + TILE / 2;
     const y = c.y * TILE + TILE / 2;
-    const rect = this.add
-      .rectangle(x, y, TILE - 4, TILE - 4, 0x551111, 0.85)
-      .setStrokeStyle(2, 0x880000)
-      .setDepth(1.5);
+    // BYOND draws corpses as the dead-state of the body sprite. Use the
+    // base sprite tinted red so it reads as a body without per-character art.
+    const rect: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle = this.textures
+      .get(ATLAS_KEY)
+      .has(CHARACTER_SPRITES.dead_male)
+      ? this.add
+          .image(x, y, ATLAS_KEY, CHARACTER_SPRITES.dead_male)
+          .setDepth(1.5)
+          .setTint(0xcc6666)
+      : this.add
+          .rectangle(x, y, TILE - 4, TILE - 4, 0x551111, 0.85)
+          .setStrokeStyle(2, 0x880000)
+          .setDepth(1.5);
     const tag = c.discovered ? `† ${c.victimRealName || c.victimUsername}` : '†';
     const label = this.add
       .text(x, y + TILE / 2 + 2, tag, {
@@ -636,12 +691,15 @@ export class GameWorld extends Scene {
     sprite.tween?.stop();
     const cardinal = facingToCardinal(facing);
     sprite.rect.play(`male.walk.${cardinal}`, true);
-    // Hold the idle frame after the walk anim ends so we don't freeze mid-step.
+    if (this.anims.exists(`hair.${sprite.hairId}.walk.${cardinal}`)) {
+      sprite.hair.play(`hair.${sprite.hairId}.walk.${cardinal}`, true);
+    }
     sprite.rect.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
       sprite.rect.setFrame(CHARACTER_SPRITES.male[cardinal]);
+      sprite.hair.setFrame(hairFrame(sprite.hairId, cardinal));
     });
     sprite.tween = this.tweens.add({
-      targets: [sprite.rect, sprite.outline, sprite.label, sprite.hpBg, sprite.hpFill],
+      targets: [sprite.rect, sprite.hair, sprite.outline, sprite.label, sprite.hpBg, sprite.hpFill],
       x: (t: Phaser.GameObjects.GameObject) =>
         t === sprite.hpFill ? targetX - (TILE - 4) / 2 : targetX,
       y: (t: Phaser.GameObjects.GameObject) => {
@@ -694,14 +752,28 @@ export class GameWorld extends Scene {
     this.groundSprites.delete(id);
   }
 
+  private renderDoors(): void {
+    const atlasTex = this.textures.get(ATLAS_KEY);
+    for (const d of this.map.doors) {
+      const frame = DOOR_SPRITES[d.kind]?.closed;
+      if (!frame || !atlasTex.has(frame)) continue;
+      this.add.image(d.x * TILE + TILE / 2, d.y * TILE + TILE / 2, ATLAS_KEY, frame).setDepth(0.5);
+    }
+  }
+
   private renderContainerHotspots(): void {
+    const atlasTex = this.textures.get(ATLAS_KEY);
     for (const c of this.map.containers) {
       const cx = c.x * TILE + TILE / 2;
       const cy = c.y * TILE + TILE / 2;
-      const rect = this.add
-        .rectangle(cx, cy, TILE - 8, TILE - 8, 0x886633, 0.55)
-        .setStrokeStyle(1, 0xccaa66, 0.7)
-        .setDepth(1);
+      const frame = CONTAINER_SPRITES[c.kind];
+      const rect: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle =
+        frame && atlasTex.has(frame)
+          ? this.add.image(cx, cy, ATLAS_KEY, frame).setDepth(1)
+          : this.add
+              .rectangle(cx, cy, TILE - 8, TILE - 8, 0x886633, 0.55)
+              .setStrokeStyle(1, 0xccaa66, 0.7)
+              .setDepth(1);
       // Synthesise a stable id from coords. Server uses a randomised id;
       // the client identifies containers by coord here and the server
       // resolves the actual containerId on the look response. Until we

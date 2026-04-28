@@ -56,6 +56,49 @@ export const ITEM_SPRITES: Record<string, string | undefined> = {
   strange_paper: 'mh-icons/items_miscellaneous/notepaper/S/0',
 };
 
+/** Container kind (DM /obj path) → atlas frame for the closed default state. */
+export const CONTAINER_SPRITES: Record<string, string | undefined> = {
+  '/obj/Containers/Bat_Bin': 'mh-icons/containers/bat_bin/S/0',
+  '/obj/Containers/Book_Shelf': 'mh-icons/containers/bookshelf_1/S/0',
+  '/obj/Containers/Drawers': 'mh-icons/containers/drawers/S/0',
+  '/obj/Containers/School_Desk': 'mh-icons/containers/school_desk/S/0',
+  '/obj/Containers/Teachers_Desk': 'mh-icons/containers/teacherdesk1/S/0',
+  '/obj/Containers/Trash_Can': 'mh-icons/containers/trash_can/S/0',
+  '/obj/Containers/Wooden_Box': 'mh-icons/containers/large_wooden_box/S/0',
+  '/obj/Containers_Stationed/Counter': 'mh-icons/containers/cabinet/S/0',
+  '/obj/Containers_Stationed/Locker': 'mh-icons/containers/key_locker/S/0',
+  '/obj/Containers_Stationed/Office_Desk': 'mh-icons/containers/desk_1/S/0',
+  '/obj/Containers_Stationed/Refigorator_Bottom': 'mh-icons/containers/fridge_2/S/0',
+};
+
+/** Door kind → {closed, open} atlas frames. */
+export const DOOR_SPRITES: Record<string, { closed: string; open: string } | undefined> = {
+  '/obj/Door/Door_Open_Right': {
+    closed: 'mh-icons/school/door/S/0',
+    open: 'mh-icons/school/open_door/S/0',
+  },
+  '/obj/Door/Door_Open_Up': {
+    closed: 'mh-icons/school/door2/S/0',
+    open: 'mh-icons/school/open_door/S/0',
+  },
+  '/obj/Door/Door2': {
+    closed: 'mh-icons/school/door2/S/0',
+    open: 'mh-icons/school/open_door/S/0',
+  },
+  '/obj/Door/Strong_Door': {
+    closed: 'mh-icons/school/front_door/S/0',
+    open: 'mh-icons/school/open_strong_door/S/0',
+  },
+  '/obj/Doors/Toilet_Door': {
+    closed: 'mh-icons/school/door/S/0',
+    open: 'mh-icons/school/open_bathroom_door/S/0',
+  },
+  '/obj/Escape_Door': {
+    closed: 'mh-icons/school/front_door/S/0',
+    open: 'mh-icons/school/open_strong_door/S/0',
+  },
+};
+
 /** Per-direction idle frame for the default human male/female base sprites. */
 export const CHARACTER_SPRITES = {
   male: {
@@ -80,4 +123,38 @@ export function characterWalkFrames(
   dir: 'S' | 'N' | 'E' | 'W',
 ): string[] {
   return [0, 1, 2, 3].map((f) => `hair-overlays/${base}/_/${dir}/${f}`);
+}
+
+/** Curated set of male/female hair overlay sources we ship as cosmetic options. */
+export const HAIR_OPTIONS_MALE = [
+  'BlackBoyHair',
+  'BlondeBoyHair',
+  'BlueBoyHair',
+  'BrownBoyHair',
+  'GrayBoyHair',
+  'GoggleHair',
+  'GreenBoyHair',
+  'OrangeBoyHair',
+  'PurpleBoyHair',
+  'RedBoyHair',
+] as const;
+
+export const HAIR_OPTIONS_FEMALE = [
+  'BlackGirlHair',
+  'BlondeGirlHair',
+  'BlueGirlHair',
+  'BrownGirlHair',
+  'GrayGirlHair',
+  'GreenGirlHair',
+  'OrangeGirlHair',
+  'PurpleGirlHair',
+  'RedGirlHair',
+] as const;
+
+export function hairFrame(hairId: string, dir: 'S' | 'N' | 'E' | 'W', frame = 0): string {
+  return `hair-overlays/${hairId}/_/${dir}/${frame}`;
+}
+
+export function hairWalkFrames(hairId: string, dir: 'S' | 'N' | 'E' | 'W'): string[] {
+  return [0, 1, 2, 3].map((f) => hairFrame(hairId, dir, f));
 }
