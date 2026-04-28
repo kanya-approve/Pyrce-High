@@ -29,6 +29,9 @@ export interface PublicPlayerInGame {
   hp: number;
   maxHp: number;
   isAlive: boolean;
+  /** Item id of what's in the player's hand, or null. Cosmetic — drives the
+   *  in-hand sprite overlay; full inventory is self-only. */
+  equippedItemId: string | null;
 }
 
 export interface S2CPhaseChange {
@@ -46,6 +49,7 @@ export interface S2CPlayerMoved {
   facing: Facing;
   /** Server tick at which the move was committed (for client interpolation). */
   tickN: number;
+  equippedItemId: string | null;
 }
 
 export interface S2CError {
@@ -63,4 +67,18 @@ export interface S2CInitialSnapshot {
   players: PublicPlayerInGame[];
   /** The recipient's own player record (so the client knows where they spawned). */
   self?: PublicPlayerInGame;
+}
+
+export interface S2CFxSmoke {
+  /** Tile coords of the smoke origin. */
+  x: number;
+  y: number;
+  durationMs: number;
+}
+
+export interface S2CDoorState {
+  /** Door coordinates from the tilemap doors[] entries. */
+  x: number;
+  y: number;
+  open: boolean;
 }

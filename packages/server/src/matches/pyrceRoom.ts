@@ -36,6 +36,8 @@ import {
   type S2CCorpseDespawn,
   type S2CCorpseSpawn,
   type S2CCraftResult,
+  type S2CDoorState,
+  type S2CFxSmoke,
   type S2CGameResult,
   type S2CInitialSnapshot,
   type S2CInvDelta,
@@ -205,6 +207,19 @@ export function matchLoop(
 
   for (const m of messages) {
     handleMessage(state, m, tick, dispatcher, logger);
+  }
+
+  if (state.pendingDoorCloses && state.pendingDoorCloses.length > 0) {
+    const remaining: typeof state.pendingDoorCloses = [];
+    for (const d of state.pendingDoorCloses) {
+      if (tick >= d.closeAtTick) {
+        const close: S2CDoorState = { x: d.x, y: d.y, open: false };
+        dispatcher.broadcastMessage(OpCode.S2C_DOOR_STATE, JSON.stringify(close), null, null, true);
+      } else {
+        remaining.push(d);
+      }
+    }
+    state.pendingDoorCloses = remaining;
   }
 
   if (tick % STAMINA_REGEN_EVERY_TICKS === 0) {
@@ -456,6 +471,13 @@ function handleMoveIntent(
   player.y = ny;
   player.lastMoveTickN = tick;
   broadcastPlayerMoved(dispatcher, player, tick);
+  if (tilemap.isDoor(nx, ny)) {
+    const open: S2CDoorState = { x: nx, y: ny, open: true };
+    dispatcher.broadcastMessage(OpCode.S2C_DOOR_STATE, JSON.stringify(open), null, null, true);
+    // Auto-close after ~3s. Cheap setTimeout-equivalent: schedule by ticks.
+    state.pendingDoorCloses ??= [];
+    state.pendingDoorCloses.push({ x: nx, y: ny, closeAtTick: tick + TICK_RATE * 3 });
+  }
 }
 
 // ---------- inventory handlers ----------
@@ -525,6 +547,9 @@ function handleInvEquip(
   }
   player.inventory = e;
   sendInvDelta(dispatcher, state, m.sender, { equipped: e.equipped });
+  // Broadcast a position update so other clients pick up the new
+  // equippedItemId in the public view (no actual movement happened).
+  broadcastPlayerMoved(dispatcher, player, state.tickN);
 }
 
 function handleInvSetHotkey(
@@ -560,9 +585,20 @@ function handleInvUse(
   if (!req) return;
   const inst = findInstance(player.inventory, req.instanceId);
   if (!inst) return;
-  // Real effects land in M4 (combat) and M5 (mode-specific items). For M3 we
-  // log usage and acknowledge; this proves the wire path works.
   logger.info('use: user=%s item=%s', player.userId, inst.itemId);
+  // Item-specific use effects land here. Smoke bomb is the first wired one;
+  // others (flashlight, syringe, …) follow as the engine adds support.
+  if (inst.itemId === 'smoke_bomb') {
+    const fx: S2CFxSmoke = { x: player.x, y: player.y, durationMs: 1500 };
+    dispatcher.broadcastMessage(OpCode.S2C_FX_SMOKE, JSON.stringify(fx), null, null, true);
+    // Consume one charge.
+    const removed = removeItem(player.inventory, inst.instanceId);
+    if (removed) {
+      player.inventory = removed.inventory;
+      sendInvFull(dispatcher, state, m.sender);
+      return;
+    }
+  }
   sendInvDelta(dispatcher, state, m.sender, {});
 }
 
@@ -882,12 +918,17 @@ function broadcastPlayerMoved(
   player: PlayerInGame,
   tick: number,
 ): void {
+  const equipped = player.inventory.equipped
+    ? (player.inventory.items.find((i) => i.instanceId === player.inventory.equipped)?.itemId ??
+      null)
+    : null;
   const payload: S2CPlayerMoved = {
     userId: player.userId,
     x: player.x,
     y: player.y,
     facing: player.facing,
     tickN: tick,
+    equippedItemId: equipped,
   };
   dispatcher.broadcastMessage(OpCode.S2C_PLAYER_MOVED, JSON.stringify(payload), null, null, true);
 }

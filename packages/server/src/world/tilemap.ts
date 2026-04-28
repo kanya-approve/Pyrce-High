@@ -53,6 +53,12 @@ export class Tilemap {
     if (!this.inBounds(x, y)) return false;
     return this.passable[y * this.width + x] === 1;
   }
+
+  /** True if (x,y) is one of the door tiles in the source map. */
+  isDoor(x: number, y: number): boolean {
+    for (const d of this.raw.doors) if (d.x === x && d.y === y) return true;
+    return false;
+  }
 }
 
 /**

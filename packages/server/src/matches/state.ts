@@ -103,6 +103,9 @@ export interface PyrceMatchState {
 
   /** Tick at which the match last had >0 presences (used for empty-reaping). */
   tickN_lastNonEmpty: number;
+
+  /** Doors briefly auto-open when stepped on. Drained in matchLoop. */
+  pendingDoorCloses?: Array<{ x: number; y: number; closeAtTick: number }>;
 }
 
 /** Build a fresh PlayerInGame, including a deep copy of the empty inventory. */
@@ -168,6 +171,9 @@ export function countPresences(state: PyrceMatchState): number {
 }
 
 export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
+  const equipped = p.inventory.equipped
+    ? (p.inventory.items.find((i) => i.instanceId === p.inventory.equipped)?.itemId ?? null)
+    : null;
   return {
     userId: p.userId,
     username: p.username,
@@ -177,5 +183,6 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
     hp: p.hp,
     maxHp: p.maxHp,
     isAlive: p.isAlive,
+    equippedItemId: equipped,
   };
 }

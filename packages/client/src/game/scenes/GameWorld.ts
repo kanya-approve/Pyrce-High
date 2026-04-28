@@ -18,6 +18,8 @@ import {
   type S2CContainerContents,
   type S2CCorpseSpawn,
   type S2CCraftResult,
+  type S2CDoorState,
+  type S2CFxSmoke,
   type S2CGameResult,
   type S2CInitialSnapshot,
   type S2CInvDelta,
@@ -59,6 +61,7 @@ interface PlayerSprite {
   rect: Phaser.GameObjects.Sprite;
   hair: Phaser.GameObjects.Sprite;
   hairId: string;
+  hand?: Phaser.GameObjects.Image;
   outline: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
   hpBg: Phaser.GameObjects.Rectangle;
@@ -326,10 +329,12 @@ export class GameWorld extends Scene {
             hp: 100,
             maxHp: 100,
             isAlive: true,
+            equippedItemId: m.equippedItemId,
           });
           return;
         }
         this.moveSprite(sprite, m.x, m.y, m.facing);
+        this.updateEquippedSprite(sprite, m.equippedItemId);
         break;
       }
       case OpCode.S2C_INITIAL_SNAPSHOT: {
@@ -437,6 +442,18 @@ export class GameWorld extends Scene {
         const a = parsePayload<S2CAnnouncement>(data);
         if (!a) return;
         this.flashAnnouncement(a);
+        break;
+      }
+      case OpCode.S2C_FX_SMOKE: {
+        const f = parsePayload<S2CFxSmoke>(data);
+        if (!f) return;
+        this.playSmoke(f.x * TILE + TILE / 2, f.y * TILE + TILE / 2);
+        break;
+      }
+      case OpCode.S2C_DOOR_STATE: {
+        const d = parsePayload<S2CDoorState>(data);
+        if (!d) return;
+        this.applyDoorState(d.x, d.y, d.open);
         break;
       }
       case OpCode.S2C_PLAYER_ROLE_ASSIGNED: {
@@ -554,6 +571,29 @@ export class GameWorld extends Scene {
     fx.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => fx.destroy());
   }
 
+  /**
+   * Render (or update) a tiny in-hand sprite next to the player showing what
+   * they're holding. Cosmetic only — the inventory state of remote players
+   * is otherwise hidden.
+   */
+  private updateEquippedSprite(sprite: PlayerSprite, itemId: string | null): void {
+    const atlasTex = this.textures.get(ATLAS_KEY);
+    const frame = itemId ? ITEM_SPRITES[itemId] : undefined;
+    if (!frame || !atlasTex.has(frame)) {
+      sprite.hand?.destroy();
+      delete sprite.hand;
+      return;
+    }
+    if (!sprite.hand) {
+      sprite.hand = this.add
+        .image(sprite.rect.x + TILE / 2 - 2, sprite.rect.y + 2, ATLAS_KEY, frame)
+        .setScale(0.6)
+        .setDepth(sprite.rect.depth + 0.015);
+    } else {
+      sprite.hand.setFrame(frame);
+    }
+  }
+
   /** Stable hair pick from userId so the same player looks the same each round. */
   private pickHair(userId: string): string {
     let h = 0;
@@ -622,6 +662,7 @@ export class GameWorld extends Scene {
     sprite.tween?.stop();
     sprite.rect.destroy();
     sprite.hair.destroy();
+    sprite.hand?.destroy();
     sprite.crown?.destroy();
     sprite.outline.destroy();
     sprite.label.destroy();
@@ -741,14 +782,19 @@ export class GameWorld extends Scene {
       sprite.hpFill,
     ];
     if (sprite.crown) targets.push(sprite.crown);
+    if (sprite.hand) targets.push(sprite.hand);
     sprite.tween = this.tweens.add({
       targets,
-      x: (t: Phaser.GameObjects.GameObject) =>
-        t === sprite.hpFill ? targetX - (TILE - 4) / 2 : targetX,
+      x: (t: Phaser.GameObjects.GameObject) => {
+        if (t === sprite.hpFill) return targetX - (TILE - 4) / 2;
+        if (t === sprite.hand) return targetX + TILE / 2 - 2;
+        return targetX;
+      },
       y: (t: Phaser.GameObjects.GameObject) => {
         if (t === sprite.label) return targetY - TILE / 2 - 4;
         if (t === sprite.hpBg || t === sprite.hpFill) return targetY - TILE / 2 - 18;
         if (t === sprite.crown) return targetY - TILE / 2 - 4;
+        if (t === sprite.hand) return targetY + 2;
         return targetY;
       },
       duration: MOVE_TWEEN_MS,
@@ -796,13 +842,27 @@ export class GameWorld extends Scene {
     this.groundSprites.delete(id);
   }
 
+  private doorSprites = new Map<string, { sprite: Phaser.GameObjects.Image; kind: string }>();
+
   private renderDoors(): void {
     const atlasTex = this.textures.get(ATLAS_KEY);
     for (const d of this.map.doors) {
       const frame = DOOR_SPRITES[d.kind]?.closed;
       if (!frame || !atlasTex.has(frame)) continue;
-      this.add.image(d.x * TILE + TILE / 2, d.y * TILE + TILE / 2, ATLAS_KEY, frame).setDepth(0.5);
+      const sprite = this.add
+        .image(d.x * TILE + TILE / 2, d.y * TILE + TILE / 2, ATLAS_KEY, frame)
+        .setDepth(0.5);
+      this.doorSprites.set(`${d.x},${d.y}`, { sprite, kind: d.kind });
     }
+  }
+
+  private applyDoorState(x: number, y: number, open: boolean): void {
+    const entry = this.doorSprites.get(`${x},${y}`);
+    if (!entry) return;
+    const frames = DOOR_SPRITES[entry.kind];
+    if (!frames) return;
+    const target = open ? frames.open : frames.closed;
+    if (this.textures.get(ATLAS_KEY).has(target)) entry.sprite.setFrame(target);
   }
 
   private renderContainerHotspots(): void {
