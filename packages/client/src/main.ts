@@ -12,6 +12,13 @@ const NAKAMA_CONFIG = {
 document.addEventListener('DOMContentLoaded', () => {
   const game = StartGame('game-container');
 
+  // Phaser listens on window by default, but the game container needs focus
+  // for some browsers / screen readers to route keys correctly. Focus it on
+  // load and any time the user clicks the canvas.
+  const container = document.getElementById('game-container');
+  container?.focus();
+  game.canvas?.addEventListener('click', () => container?.focus());
+
   connectAnonymous(NAKAMA_CONFIG)
     .then((conn) => {
       const matchClient = new NakamaMatchClient(conn.client, conn.socket, conn.session);
