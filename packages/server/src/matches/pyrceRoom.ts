@@ -10,6 +10,7 @@ import {
   type C2SContainerLook,
   type C2SContainerPut,
   type C2SContainerTake,
+  type C2SDoorToggle,
   type C2SInvCraft,
   type C2SInvDrop,
   type C2SInvEquip,
@@ -23,6 +24,8 @@ import {
   DIRECTION_DELTAS,
   type Facing,
   getMode,
+  ITEMS,
+  type ItemInstanceId,
   MatchPhase,
   OpCode,
   type PublicCorpse,
@@ -38,6 +41,7 @@ import {
   type S2CCraftResult,
   type S2CDoorState,
   type S2CFxSmoke,
+  type S2CFxSound,
   type S2CGameResult,
   type S2CInitialSnapshot,
   type S2CInvDelta,
@@ -355,6 +359,9 @@ function handleMessage(
     case OpCode.C2S_INV_USE:
       handleInvUse(state, m, dispatcher, logger);
       break;
+    case OpCode.C2S_DOOR_TOGGLE:
+      handleDoorToggle(state, m, dispatcher);
+      break;
     case OpCode.C2S_INV_CRAFT:
       handleInvCraft(state, m, dispatcher);
       break;
@@ -471,13 +478,6 @@ function handleMoveIntent(
   player.y = ny;
   player.lastMoveTickN = tick;
   broadcastPlayerMoved(dispatcher, player, tick);
-  if (tilemap.isDoor(nx, ny)) {
-    const open: S2CDoorState = { x: nx, y: ny, open: true };
-    dispatcher.broadcastMessage(OpCode.S2C_DOOR_STATE, JSON.stringify(open), null, null, true);
-    // Auto-close after ~3s. Cheap setTimeout-equivalent: schedule by ticks.
-    state.pendingDoorCloses ??= [];
-    state.pendingDoorCloses.push({ x: nx, y: ny, closeAtTick: tick + TICK_RATE * 3 });
-  }
 }
 
 // ---------- inventory handlers ----------
@@ -585,21 +585,180 @@ function handleInvUse(
   if (!req) return;
   const inst = findInstance(player.inventory, req.instanceId);
   if (!inst) return;
-  logger.info('use: user=%s item=%s', player.userId, inst.itemId);
-  // Item-specific use effects land here. Smoke bomb is the first wired one;
-  // others (flashlight, syringe, …) follow as the engine adds support.
-  if (inst.itemId === 'smoke_bomb') {
-    const fx: S2CFxSmoke = { x: player.x, y: player.y, durationMs: 1500 };
-    dispatcher.broadcastMessage(OpCode.S2C_FX_SMOKE, JSON.stringify(fx), null, null, true);
-    // Consume one charge.
-    const removed = removeItem(player.inventory, inst.instanceId);
-    if (removed) {
-      player.inventory = removed.inventory;
-      sendInvFull(dispatcher, state, m.sender);
+  const def = ITEMS[inst.itemId];
+  const kind = def?.use?.kind;
+  logger.info('use: user=%s item=%s kind=%s', player.userId, inst.itemId, kind ?? 'none');
+
+  switch (kind) {
+    case 'smoke_bomb': {
+      const fx: S2CFxSmoke = { x: player.x, y: player.y, durationMs: 1500 };
+      dispatcher.broadcastMessage(OpCode.S2C_FX_SMOKE, JSON.stringify(fx), null, null, true);
+      broadcastFxSound(dispatcher, 'smallexplosion', player.x, player.y, 0.7);
+      consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
       return;
     }
+    case 'first_aid': {
+      // Heals about half of any missing HP — DM's `Heal()` proc.
+      const missing = player.maxHp - player.hp;
+      if (missing <= 0) {
+        sendError(dispatcher, m.sender, 'full_hp', 'already at full health');
+        return;
+      }
+      const healed = Math.max(1, Math.floor(missing / 2) + 25);
+      player.hp = Math.min(player.maxHp, player.hp + healed);
+      sendPlayerHP(dispatcher, m.sender, player);
+      consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
+      return;
+    }
+    case 'drink_soda': {
+      // +10..60 stamina (DM Vars.dm: stamina += rand(10,60)).
+      const restore = 10 + Math.floor(Math.random() * 51);
+      player.stamina = Math.min(player.maxStamina, player.stamina + restore);
+      sendStamina(dispatcher, m.sender, player);
+      consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
+      return;
+    }
+    case 'popper_trap': {
+      // Drops a smoke + announce. Trap behaviour proper is a M-future; for now
+      // it puffs at the player's tile and consumes the charge.
+      const fx: S2CFxSmoke = { x: player.x, y: player.y, durationMs: 2500 };
+      dispatcher.broadcastMessage(OpCode.S2C_FX_SMOKE, JSON.stringify(fx), null, null, true);
+      consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
+      return;
+    }
+    case 'key_card_swipe': {
+      // Open the closest door within Chebyshev 1 — DM's `Swipe()` verb.
+      const door = findAdjacentDoor(player.x, player.y);
+      if (!door) {
+        sendError(dispatcher, m.sender, 'no_door', 'no door adjacent');
+        return;
+      }
+      const open: S2CDoorState = { x: door.x, y: door.y, open: true };
+      dispatcher.broadcastMessage(OpCode.S2C_DOOR_STATE, JSON.stringify(open), null, null, true);
+      state.pendingDoorCloses ??= [];
+      state.pendingDoorCloses.push({ x: door.x, y: door.y, closeAtTick: state.tickN + TICK_RATE * 5 });
+      sendInvDelta(dispatcher, state, m.sender, {});
+      return;
+    }
+    case 'fill_syringe': {
+      // Mark the inst's data with the payload. Doesn't consume — the syringe
+      // is what gets injected. DM's `Mix()` verb on the consumable.
+      const payload = def?.use && 'payload' in def.use ? def.use.payload : undefined;
+      const updated = {
+        ...inst,
+        data: { ...(inst.data ?? {}), filled: payload ?? 'unknown' },
+      };
+      player.inventory = {
+        ...player.inventory,
+        items: player.inventory.items.map((it) =>
+          it.instanceId === inst.instanceId ? updated : it,
+        ),
+      };
+      sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
+      return;
+    }
+    case 'syringe': {
+      // Inject self with whatever's filled. Only Cure does anything visible
+      // for v1 — others follow when the matching status effects land.
+      const filled = inst.data?.['filled'];
+      if (!filled) {
+        sendError(dispatcher, m.sender, 'empty_syringe', 'fill the syringe first');
+        return;
+      }
+      if (filled === 'Regenerative') {
+        player.hp = Math.min(player.maxHp, player.hp + 30);
+        sendPlayerHP(dispatcher, m.sender, player);
+      }
+      // Cure / Sedative status effects are no-ops until the buff system lands.
+      consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
+      return;
+    }
+    case 'flashlight':
+    case 'glasses_toggle': {
+      // Toggle a per-instance `on` flag. Lighting picks up flashlight via
+      // ITEMS.lightRadius today; the toggle ramps that conditionally.
+      const updated = {
+        ...inst,
+        data: { ...(inst.data ?? {}), on: !inst.data?.['on'] },
+      };
+      player.inventory = {
+        ...player.inventory,
+        items: player.inventory.items.map((it) =>
+          it.instanceId === inst.instanceId ? updated : it,
+        ),
+      };
+      sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
+      return;
+    }
+    // Stub: notify the user but don't crash. These need full mode support
+    // (death_note_write needs the Kira role, computer needs the student
+    // roster, etc.) — wired when modes ship.
+    case 'death_note_write':
+    case 'paper_write':
+    case 'paper_airplane':
+    case 'paper_view':
+    case 'pda':
+    case 'computer':
+    case 'feather_shoot':
+    case 'door_code_view': {
+      sendError(
+        dispatcher,
+        m.sender,
+        'not_yet_implemented',
+        `${def?.name ?? inst.itemId}: stub — landing with role/mode work`,
+      );
+      sendInvDelta(dispatcher, state, m.sender, {});
+      return;
+    }
+    default:
+      sendInvDelta(dispatcher, state, m.sender, {});
+      return;
   }
-  sendInvDelta(dispatcher, state, m.sender, {});
+}
+
+/** Remove one instance from the player's inventory and broadcast the delta. */
+function consumeCharge(
+  state: PyrceMatchState,
+  dispatcher: nkruntime.MatchDispatcher,
+  sender: nkruntime.Presence,
+  player: PlayerInGame,
+  instanceId: ItemInstanceId,
+): void {
+  const removed = removeItem(player.inventory, instanceId);
+  if (!removed) return;
+  player.inventory = removed.inventory;
+  sendInvFull(dispatcher, state, sender);
+}
+
+function handleDoorToggle(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player) return;
+  const req = parseBody<C2SDoorToggle>(m.data);
+  if (!req) return;
+  if (Math.max(Math.abs(req.x - player.x), Math.abs(req.y - player.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'door not adjacent');
+    return;
+  }
+  if (!tilemap.isDoor(req.x, req.y)) return;
+  state.openDoors ??= {};
+  const key = `${req.x},${req.y}`;
+  const isOpen = state.openDoors[key] === true;
+  state.openDoors[key] = !isOpen;
+  const payload: S2CDoorState = { x: req.x, y: req.y, open: !isOpen };
+  dispatcher.broadcastMessage(OpCode.S2C_DOOR_STATE, JSON.stringify(payload), null, null, true);
+  broadcastFxSound(dispatcher, 'doormetal', req.x, req.y, 0.6);
+}
+
+function findAdjacentDoor(x: number, y: number): { x: number; y: number } | null {
+  for (const d of tilemap.raw.doors) {
+    if (Math.max(Math.abs(d.x - x), Math.abs(d.y - y)) <= 1) return d;
+  }
+  return null;
 }
 
 function handleInvCraft(
@@ -813,6 +972,8 @@ function handleAttack(
     state.corpses[result.corpse.corpseId] = result.corpse;
     broadcastPlayerDied(dispatcher, victim, attacker.userId, result.weaponName);
     broadcastCorpseUpdate(dispatcher, result.corpse);
+    broadcastFxSound(dispatcher, sfxForWeapon(result.weaponName), victim.x, victim.y, 0.9);
+    broadcastFxSound(dispatcher, 'body_fall', victim.x, victim.y, 0.7);
     // Killer + corpse are both visible to anyone with line of sight; the
     // body-discovery flow will fire on someone else walking adjacent.
     logger.info(
@@ -1081,6 +1242,28 @@ function broadcastCorpseUpdate(dispatcher: nkruntime.MatchDispatcher, c: Corpse)
   };
   const payload: S2CCorpseSpawn = { corpse: pub };
   dispatcher.broadcastMessage(OpCode.S2C_CORPSE_SPAWN, JSON.stringify(payload), null, null, true);
+}
+
+function broadcastFxSound(
+  dispatcher: nkruntime.MatchDispatcher,
+  key: string,
+  x: number,
+  y: number,
+  volume = 1.0,
+): void {
+  const payload: S2CFxSound = { key, x, y, volume };
+  dispatcher.broadcastMessage(OpCode.S2C_FX_SOUND, JSON.stringify(payload), null, null, true);
+}
+
+/** Map a weapon name to the SFX key. Falls through to "punch" for unarmed. */
+function sfxForWeapon(weaponName: string): string {
+  const n = weaponName.toLowerCase();
+  if (n.includes('knife')) return 'knife_stab';
+  if (n.includes('axe')) return 'axe_door';
+  if (n.includes('billhook')) return 'billhook';
+  if (n.includes('taser')) return 'taser';
+  if (n.includes('bat') || n.includes('pipe') || n.includes('hammer')) return 'bat_hit';
+  return 'punch';
 }
 
 function broadcastAnnouncement(

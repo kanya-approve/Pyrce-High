@@ -31,6 +31,7 @@ const OP = {
   C2S_INV_EQUIP: 1402,
   C2S_CONTAINER_LOOK: 1500,
   C2S_CONTAINER_TAKE: 1501,
+  C2S_DOOR_TOGGLE: 1700,
   S2C_PHASE_CHANGE: 2002,
   S2C_PLAYER_MOVED: 2310,
   S2C_INV_FULL: 2400,
@@ -168,28 +169,35 @@ async function main() {
   await sleep(200);
   console.log(`   alice=${JSON.stringify(posA.cur)} bob=${JSON.stringify(posB.cur)}`);
 
-  // ----- 2) Door state -----
-  console.log('2) Walk alice onto a door tile, expect S2C_DOOR_STATE{open:true}');
-  // Find the closest door to alice.
+  // ----- 2) Door toggle -----
+  console.log('2) Walk alice next to a door, send C2S_DOOR_TOGGLE, expect open then close');
   const doors = TILEMAP.doors.slice().sort(
     (a, b) => cheb(posA.cur, a) - cheb(posA.cur, b),
   );
   const door = doors[0];
   console.log(`   nearest door at (${door.x}, ${door.y}) dist=${cheb(posA.cur, door)}`);
 
-  const doorOpenP = aIn.onceOp(OP.S2C_DOOR_STATE, (p) => p.open === true && p.x === door.x && p.y === door.y);
-  const reached = await walkTo(A.socket, matchId, posA, door, 0);
-  if (!reached) throw new Error(`alice could not reach door at (${door.x}, ${door.y})`);
+  const reached = await walkTo(A.socket, matchId, posA, door, 1);
+  if (!reached) throw new Error(`alice could not get adjacent to door`);
 
+  const doorOpenP = aIn.onceOp(
+    OP.S2C_DOOR_STATE,
+    (p) => p.open === true && p.x === door.x && p.y === door.y,
+  );
+  await A.socket.sendMatchState(matchId, OP.C2S_DOOR_TOGGLE, JSON.stringify({ x: door.x, y: door.y }));
   const opened = await Promise.race([doorOpenP, sleep(2000).then(() => null)]);
-  if (!opened) throw new Error('did not receive S2C_DOOR_STATE{open:true} after stepping on door');
+  if (!opened) throw new Error('did not receive S2C_DOOR_STATE{open:true} after toggle');
   console.log(`   PASS door open broadcast received: ${JSON.stringify(opened)}`);
 
-  // Now wait up to ~5s for the auto-close.
-  const doorCloseP = aIn.onceOp(OP.S2C_DOOR_STATE, (p) => p.open === false && p.x === door.x && p.y === door.y);
-  const closed = await Promise.race([doorCloseP, sleep(5000).then(() => null)]);
-  if (!closed) throw new Error('door auto-close did not fire within 5s');
-  console.log(`   PASS door auto-close received: ${JSON.stringify(closed)}`);
+  // Toggle again to close.
+  const doorCloseP = aIn.onceOp(
+    OP.S2C_DOOR_STATE,
+    (p) => p.open === false && p.x === door.x && p.y === door.y,
+  );
+  await A.socket.sendMatchState(matchId, OP.C2S_DOOR_TOGGLE, JSON.stringify({ x: door.x, y: door.y }));
+  const closed = await Promise.race([doorCloseP, sleep(2000).then(() => null)]);
+  if (!closed) throw new Error('did not receive S2C_DOOR_STATE{open:false} on second toggle');
+  console.log(`   PASS door close broadcast received: ${JSON.stringify(closed)}`);
 
   // ----- 3) Equipped item visible to others -----
   console.log('3) Alice picks up something + equips, bob sees equippedItemId');

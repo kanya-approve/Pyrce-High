@@ -21,6 +21,7 @@ import {
   type S2CCraftResult,
   type S2CDoorState,
   type S2CFxSmoke,
+  type S2CFxSound,
   type S2CGameResult,
   type S2CInitialSnapshot,
   type S2CInvDelta,
@@ -372,6 +373,17 @@ export class GameWorld extends Scene {
         return;
       }
     }
+    // Open or close the nearest adjacent door.
+    let bestDoor: { x: number; y: number; dist: number } | null = null;
+    for (const d of this.map.doors) {
+      const dist = Math.max(Math.abs(d.x - me.x), Math.abs(d.y - me.y));
+      if (dist > 1) continue;
+      if (!bestDoor || dist < bestDoor.dist) bestDoor = { x: d.x, y: d.y, dist };
+    }
+    if (bestDoor) {
+      void this.match.sendMatch(OpCode.C2S_DOOR_TOGGLE, { x: bestDoor.x, y: bestDoor.y });
+      return;
+    }
     // Otherwise: open the nearest container within Chebyshev 1.
     let best: { x: number; y: number; dist: number } | null = null;
     for (const c of this.containerHotspots) {
@@ -550,6 +562,12 @@ export class GameWorld extends Scene {
         this.playSmoke(f.x * TILE + TILE / 2, f.y * TILE + TILE / 2);
         break;
       }
+      case OpCode.S2C_FX_SOUND: {
+        const f = parsePayload<S2CFxSound>(data);
+        if (!f) return;
+        this.playSfx(f.key, f.x, f.y, f.volume);
+        break;
+      }
       case OpCode.S2C_DOOR_STATE: {
         const d = parsePayload<S2CDoorState>(data);
         if (!d) return;
@@ -645,6 +663,25 @@ export class GameWorld extends Scene {
         });
       }
     }
+  }
+
+  /**
+   * Play a positional SFX. Volume drops with Chebyshev distance from the
+   * listener (self): full volume at 0 tiles, 0 at 14+. Sound out of range
+   * is dropped entirely so we don't load the audio context with inaudible
+   * .play() calls.
+   */
+  playSfx(key: string, worldTileX: number, worldTileY: number, baseVolume: number): void {
+    if (!this.cache.audio.exists(key)) return;
+    const me = this.players.get(this.match.userId)?.state;
+    let attenuated = baseVolume;
+    if (me) {
+      const d = Math.max(Math.abs(me.x - worldTileX), Math.abs(me.y - worldTileY));
+      const ATTENUATION_RANGE = 14;
+      if (d >= ATTENUATION_RANGE) return;
+      attenuated *= 1 - d / ATTENUATION_RANGE;
+    }
+    this.sound.play(key, { volume: Math.max(0, Math.min(1, attenuated)) });
   }
 
   /**

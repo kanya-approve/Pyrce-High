@@ -40,6 +40,8 @@ export enum OpCode {
   C2S_CONTAINER_TAKE = 1501,
   C2S_CONTAINER_PUT = 1502,
 
+  C2S_DOOR_TOGGLE = 1700,
+
   // ===== Server → Client =====
   S2C_HELLO = 2000,
   S2C_ERROR = 2001,
@@ -77,4 +79,5 @@ export enum OpCode {
   S2C_CRAFT_RESULT = 2520,
   S2C_DOOR_STATE = 2540,
   S2C_FX_SMOKE = 2710,
+  S2C_FX_SOUND = 2711,
 }

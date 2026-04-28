@@ -85,3 +85,18 @@ export interface S2CDoorState {
   y: number;
   open: boolean;
 }
+
+export interface C2SDoorToggle {
+  x: number;
+  y: number;
+}
+
+export interface S2CFxSound {
+  /** Audio key — matches the file at /audio/<key>.<ext> on the client. */
+  key: string;
+  /** World-tile coords; client attenuates volume by Chebyshev distance. */
+  x: number;
+  y: number;
+  /** 0..1 base volume. */
+  volume: number;
+}

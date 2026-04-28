@@ -19,6 +19,27 @@ export class Boot extends Scene {
     // them as static files under /public/atlases.
     this.load.atlas(ATLAS_KEY, ATLAS_PNG, ATLAS_JSON);
     this.load.json('turf-icons', '/atlases/turf-icons.json');
+
+    // SFX bank — file names match server-side broadcastFxSound keys.
+    const sfx: Array<[string, string]> = [
+      ['knife_stab', '/audio/knife_stab.ogg'],
+      ['axe_door', '/audio/axe_door.ogg'],
+      ['billhook', '/audio/billhook.wav'],
+      ['taser', '/audio/taser.wav'],
+      ['bat_hit', '/audio/bat_hit.ogg'],
+      ['punch', '/audio/punch.wav'],
+      ['body_fall', '/audio/body_fall.wav'],
+      ['doormetal', '/audio/doormetal.wav'],
+      ['door_lock', '/audio/door_lock.ogg'],
+      ['footsteps', '/audio/footsteps.wav'],
+      ['smallexplosion', '/audio/smallexplosion.wav'],
+      ['writing', '/audio/writing.wav'],
+      ['page_turn_1', '/audio/page_turn_1.ogg'],
+      ['nailing', '/audio/nailing.ogg'],
+      ['howling', '/audio/howling.ogg'],
+      ['alarm', '/audio/alarm.wav'],
+    ];
+    for (const [key, path] of sfx) this.load.audio(key, path);
   }
 
   create(): void {

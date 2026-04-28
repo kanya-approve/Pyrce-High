@@ -106,6 +106,9 @@ export interface PyrceMatchState {
 
   /** Doors briefly auto-open when stepped on. Drained in matchLoop. */
   pendingDoorCloses?: Array<{ x: number; y: number; closeAtTick: number }>;
+
+  /** Persistent door open/closed state, keyed by `${x},${y}`. */
+  openDoors?: { [coordKey: string]: boolean };
 }
 
 /** Build a fresh PlayerInGame, including a deep copy of the empty inventory. */
