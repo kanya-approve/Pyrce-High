@@ -163,16 +163,20 @@ export class GameWorld extends Scene {
       this.actionKeys = this.input.keyboard.addKeys(
         'E,F,G,C,I,ONE,TWO,THREE,FOUR,FIVE',
       ) as typeof this.actionKeys;
-      this.actionKeys.E.on('down', () => this.handleInteract());
-      this.actionKeys.F.on('down', () => this.handleAttack());
-      this.actionKeys.G.on('down', () => this.handleDropEquipped());
-      this.actionKeys.C.on('down', () => this.handleCraft('spear'));
-      this.actionKeys.I.on('down', () => this.scene.get('Hud').events.emit('inv:refresh'));
-      this.actionKeys.ONE.on('down', () => this.handleHotkey(1));
-      this.actionKeys.TWO.on('down', () => this.handleHotkey(2));
-      this.actionKeys.THREE.on('down', () => this.handleHotkey(3));
-      this.actionKeys.FOUR.on('down', () => this.handleHotkey(4));
-      this.actionKeys.FIVE.on('down', () => this.handleHotkey(5));
+      const guard = (fn: () => void) => () => {
+        if (isTextInputFocused()) return;
+        fn();
+      };
+      this.actionKeys.E.on('down', guard(() => this.handleInteract()));
+      this.actionKeys.F.on('down', guard(() => this.handleAttack()));
+      this.actionKeys.G.on('down', guard(() => this.handleDropEquipped()));
+      this.actionKeys.C.on('down', guard(() => this.handleCraft('spear')));
+      this.actionKeys.I.on('down', guard(() => this.scene.get('Hud').events.emit('inv:refresh')));
+      this.actionKeys.ONE.on('down', guard(() => this.handleHotkey(1)));
+      this.actionKeys.TWO.on('down', guard(() => this.handleHotkey(2)));
+      this.actionKeys.THREE.on('down', guard(() => this.handleHotkey(3)));
+      this.actionKeys.FOUR.on('down', guard(() => this.handleHotkey(4)));
+      this.actionKeys.FIVE.on('down', guard(() => this.handleHotkey(5)));
     }
 
     this.statusText = this.add
@@ -258,6 +262,7 @@ export class GameWorld extends Scene {
   }
 
   override update(_time: number, _delta: number): void {
+    if (isTextInputFocused()) return; // chat / any text input owns the keys
     const now = performance.now();
     if (now - this.lastInputAt < INPUT_THROTTLE_MS) return;
     const dir = this.readInputDirection();
@@ -951,6 +956,13 @@ function colourFor(category: string): string {
     default:
       return '#222';
   }
+}
+
+function isTextInputFocused(): boolean {
+  const ae = document.activeElement;
+  if (!ae) return false;
+  const tag = ae.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || (ae as HTMLElement).isContentEditable === true;
 }
 
 function facingToCardinal(f: Facing): 'S' | 'N' | 'E' | 'W' {
