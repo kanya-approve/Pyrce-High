@@ -12,8 +12,8 @@
       "packages/**/*.json",
       "tools/**/*.ts",
       "tools/**/*.json",
-      "!packages/client/public/atlases/**",
-      "!packages/shared/src/content/tilemap/**"
+      "!packages/client/public/atlases",
+      "!packages/shared/src/content/tilemap"
     ]
   },
   "formatter": {

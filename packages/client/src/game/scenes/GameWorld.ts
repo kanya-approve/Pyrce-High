@@ -256,12 +256,9 @@ export class GameWorld extends Scene {
     );
 
     // Typing indicators — pop a "..." bubble while remote player is typing.
-    this.game.events.on(
-      'chat:typing',
-      (ev: { fromUserId: string; active: boolean }) => {
-        this.setTypingIndicator(ev.fromUserId, ev.active);
-      },
-    );
+    this.game.events.on('chat:typing', (ev: { fromUserId: string; active: boolean }) => {
+      this.setTypingIndicator(ev.fromUserId, ev.active);
+    });
 
     this.match.onMatchData((msg) => this.handleMatchData(msg.op_code, msg.data));
   }
@@ -713,11 +710,7 @@ export class GameWorld extends Scene {
    * they're holding. Cosmetic only — the inventory state of remote players
    * is otherwise hidden.
    */
-  private updateEquippedSprite(
-    sprite: PlayerSprite,
-    itemId: string | null,
-    bloody = false,
-  ): void {
+  private updateEquippedSprite(sprite: PlayerSprite, itemId: string | null, bloody = false): void {
     const atlasTex = this.textures.get(ATLAS_KEY);
     const bloodyFrame = bloody && itemId ? BLOODY_ITEM_SPRITES[itemId] : undefined;
     const normalFrame = itemId ? ITEM_SPRITES[itemId] : undefined;

@@ -93,7 +93,10 @@ export class Hud extends Scene {
     const barWidth = 140;
     const barHeight = 12;
 
-    if (this.textures.exists(ATLAS_KEY) && this.textures.get(ATLAS_KEY).has('root/healthhud/_/S/0')) {
+    if (
+      this.textures.exists(ATLAS_KEY) &&
+      this.textures.get(ATLAS_KEY).has('root/healthhud/_/S/0')
+    ) {
       this.add
         .image(x0 + 8, y0 + barHeight / 2, ATLAS_KEY, 'root/healthhud/_/S/0')
         .setOrigin(0.5, 0.5)

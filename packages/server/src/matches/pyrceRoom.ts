@@ -636,7 +636,11 @@ function handleInvUse(
       const open: S2CDoorState = { x: door.x, y: door.y, open: true };
       dispatcher.broadcastMessage(OpCode.S2C_DOOR_STATE, JSON.stringify(open), null, null, true);
       state.pendingDoorCloses ??= [];
-      state.pendingDoorCloses.push({ x: door.x, y: door.y, closeAtTick: state.tickN + TICK_RATE * 5 });
+      state.pendingDoorCloses.push({
+        x: door.x,
+        y: door.y,
+        closeAtTick: state.tickN + TICK_RATE * 5,
+      });
       sendInvDelta(dispatcher, state, m.sender, {});
       return;
     }
