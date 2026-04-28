@@ -56,6 +56,24 @@ export const ITEM_SPRITES: Record<string, string | undefined> = {
   strange_paper: 'mh-icons/items_miscellaneous/notepaper/S/0',
 };
 
+/**
+ * Bloody-variant sprite for an item id, when one exists in the atlas.
+ * After a kill the server flags the equipped weapon with bloody=true; the
+ * client renders this frame in place of the normal one.
+ */
+export const BLOODY_ITEM_SPRITES: Record<string, string | undefined> = {
+  knife: 'mh-icons/inventoryweapons/bloody_knife/S/0',
+  axe: 'mh-icons/inventoryweapons/bloody_axe/S/0',
+  alondite: 'mh-icons/inventoryweapons/bloody_alondite/S/0',
+  billhook: 'mh-icons/inventoryweapons/bloody_billhook/S/0',
+  metal_bat: 'mh-icons/inventoryweapons/bloody_metal_bat/S/0',
+  metal_pipe: 'mh-icons/inventoryweapons/bloody_pipe/S/0',
+  nailed_bat: 'mh-icons/inventoryweapons/bloody_nailed_bat/S/0',
+  hammer: 'mh-icons/inventoryweapons/bloody_hammer/S/0',
+  nanatsu_yoru: 'mh-icons/inventoryweapons/bloody_nanatsu/S/0',
+  seventh_holy_scripture: 'mh-icons/inventoryweapons/bloody_seven/S/0',
+};
+
 /** Container kind (DM /obj path) → atlas frame for the closed default state. */
 export const CONTAINER_SPRITES: Record<string, string | undefined> = {
   '/obj/Containers/Bat_Bin': 'mh-icons/containers/bat_bin/S/0',

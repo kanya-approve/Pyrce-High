@@ -918,9 +918,8 @@ function broadcastPlayerMoved(
   player: PlayerInGame,
   tick: number,
 ): void {
-  const equipped = player.inventory.equipped
-    ? (player.inventory.items.find((i) => i.instanceId === player.inventory.equipped)?.itemId ??
-      null)
+  const equippedInst = player.inventory.equipped
+    ? player.inventory.items.find((i) => i.instanceId === player.inventory.equipped)
     : null;
   const payload: S2CPlayerMoved = {
     userId: player.userId,
@@ -928,7 +927,8 @@ function broadcastPlayerMoved(
     y: player.y,
     facing: player.facing,
     tickN: tick,
-    equippedItemId: equipped,
+    equippedItemId: equippedInst?.itemId ?? null,
+    equippedItemBloody: equippedInst?.data?.['bloody'] === true,
   };
   dispatcher.broadcastMessage(OpCode.S2C_PLAYER_MOVED, JSON.stringify(payload), null, null, true);
 }

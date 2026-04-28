@@ -1,4 +1,4 @@
-import { ChatChannel, OpCode, type S2CChatMessage } from '@pyrce/shared';
+import { ChatChannel, OpCode, type S2CChatMessage, type S2CTyping } from '@pyrce/shared';
 import { Scene } from 'phaser';
 import type { NakamaMatchClient } from '../../net/matchClient';
 
@@ -110,6 +110,9 @@ export class ChatOverlay extends Scene {
       if (msg.op_code === OpCode.S2C_CHAT_MESSAGE) {
         const m = parsePayload<S2CChatMessage>(msg.data);
         if (m) this.handleChatMessage(m);
+      } else if (msg.op_code === OpCode.S2C_TYPING) {
+        const t = parsePayload<S2CTyping>(msg.data);
+        if (t) this.game.events.emit('chat:typing', t);
       }
     });
   }
@@ -153,6 +156,9 @@ export class ChatOverlay extends Scene {
         this.blurInput();
       }
     });
+    // istyping: emit BEGIN once the user has typed >4 chars (matches DM
+    // behaviour). Emit END on blur/submit/clear.
+    input.addEventListener('input', () => this.maybeEmitTyping());
     container.appendChild(input);
     parent.appendChild(container);
     this.inputEl = input;
@@ -166,6 +172,7 @@ export class ChatOverlay extends Scene {
   }
 
   private blurInput(): void {
+    this.endTyping();
     this.inputEl.value = '';
     this.inputContainer.style.display = 'none';
     this.inputEl.blur();
@@ -182,6 +189,34 @@ export class ChatOverlay extends Scene {
     const parsed = this.parseInput(raw);
     void this.match.sendMatch(OpCode.C2S_CHAT, parsed);
     this.blurInput();
+  }
+
+  private typingActive = false;
+  private typingChannel: ChatChannel = ChatChannel.Say;
+
+  /** Emit C2S_TYPING_BEGIN once after >4 chars; END when cleared/sent. */
+  private maybeEmitTyping(): void {
+    const raw = this.inputEl.value;
+    const parsed = this.parseInput(raw.trim());
+    const longEnough = parsed.body.length > 4;
+    if (longEnough && !this.typingActive) {
+      this.typingActive = true;
+      this.typingChannel = parsed.channel;
+      void this.match.sendMatch(OpCode.C2S_TYPING_BEGIN, { channel: parsed.channel });
+    } else if (!longEnough && this.typingActive) {
+      this.endTyping();
+    } else if (this.typingActive && parsed.channel !== this.typingChannel) {
+      // Channel switched mid-type (e.g. they added a /shout prefix); resync.
+      void this.match.sendMatch(OpCode.C2S_TYPING_END, { channel: this.typingChannel });
+      void this.match.sendMatch(OpCode.C2S_TYPING_BEGIN, { channel: parsed.channel });
+      this.typingChannel = parsed.channel;
+    }
+  }
+
+  private endTyping(): void {
+    if (!this.typingActive) return;
+    this.typingActive = false;
+    void this.match.sendMatch(OpCode.C2S_TYPING_END, { channel: this.typingChannel });
   }
 
   private parseInput(raw: string): ParsedInput {

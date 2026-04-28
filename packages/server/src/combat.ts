@@ -117,6 +117,22 @@ export function resolveAttack(
       };
       result.killed = true;
       result.corpse = corpse;
+
+      // Mark the killer's equipped weapon bloody if the atlas has a bloody
+      // variant for that itemId — purely cosmetic. Goja proxy: replace the
+      // whole instance and the items array, don't mutate in place.
+      if (equippedInst) {
+        const bloodied = {
+          ...equippedInst,
+          data: { ...(equippedInst.data ?? {}), bloody: true },
+        };
+        attacker.inventory = {
+          ...attacker.inventory,
+          items: attacker.inventory.items.map((it) =>
+            it.instanceId === equippedInst.instanceId ? bloodied : it,
+          ),
+        };
+      }
     } else {
       // Non-lethal hits cap HP at 1 instead of killing — DM's KO behaviour.
       victim.hp = 1;

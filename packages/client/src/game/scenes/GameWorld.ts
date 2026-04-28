@@ -1,5 +1,6 @@
 import {
   ATLAS_KEY,
+  BLOODY_ITEM_SPRITES,
   CHARACTER_SPRITES,
   CONTAINER_SPRITES,
   DOOR_SPRITES,
@@ -253,15 +254,56 @@ export class GameWorld extends Scene {
       },
     );
 
+    // Typing indicators — pop a "..." bubble while remote player is typing.
+    this.game.events.on(
+      'chat:typing',
+      (ev: { fromUserId: string; active: boolean }) => {
+        this.setTypingIndicator(ev.fromUserId, ev.active);
+      },
+    );
+
     this.match.onMatchData((msg) => this.handleMatchData(msg.op_code, msg.data));
   }
 
   shutdown(): void {
     this.match.onMatchData(() => {});
     this.game.events.off('chat:bubble');
+    this.game.events.off('chat:typing');
     this.scene.stop('Hud');
     this.scene.stop('ChatOverlay');
     this.scene.stop('Lighting');
+  }
+
+  private typingBubbles = new Map<string, Phaser.GameObjects.Text>();
+
+  private setTypingIndicator(userId: string, active: boolean): void {
+    const sprite = this.players.get(userId);
+    if (!sprite) return;
+    const existing = this.typingBubbles.get(userId);
+    if (active) {
+      if (existing) return;
+      const bubble = this.add
+        .text(sprite.rect.x, sprite.rect.y - TILE - 4, '…', {
+          fontFamily: 'Arial Black',
+          fontSize: 16,
+          color: '#ffffff',
+          backgroundColor: '#00000099',
+          padding: { left: 6, right: 6, top: 2, bottom: 0 },
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(1500);
+      this.typingBubbles.set(userId, bubble);
+      this.tweens.add({
+        targets: bubble,
+        alpha: { from: 0.4, to: 1 },
+        duration: 600,
+        yoyo: true,
+        repeat: -1,
+      });
+    } else if (existing) {
+      existing.destroy();
+      this.typingBubbles.delete(userId);
+    }
   }
 
   private spawnChatBubble(userId: string, body: string, durationMs: number): void {
@@ -302,6 +344,13 @@ export class GameWorld extends Scene {
   }
 
   override update(_time: number, _delta: number): void {
+    // Keep typing bubbles glued to their speaker every frame.
+    for (const [userId, bubble] of this.typingBubbles) {
+      const sprite = this.players.get(userId);
+      if (!sprite) continue;
+      bubble.setPosition(sprite.rect.x, sprite.rect.y - TILE - 4);
+    }
+
     if (isTextInputFocused()) return; // chat / any text input owns the keys
     const now = performance.now();
     if (now - this.lastInputAt < INPUT_THROTTLE_MS) return;
@@ -375,11 +424,12 @@ export class GameWorld extends Scene {
             maxHp: 100,
             isAlive: true,
             equippedItemId: m.equippedItemId,
+            equippedItemBloody: m.equippedItemBloody,
           });
           return;
         }
         this.moveSprite(sprite, m.x, m.y, m.facing);
-        this.updateEquippedSprite(sprite, m.equippedItemId);
+        this.updateEquippedSprite(sprite, m.equippedItemId, m.equippedItemBloody);
         break;
       }
       case OpCode.S2C_INITIAL_SNAPSHOT: {
@@ -455,12 +505,17 @@ export class GameWorld extends Scene {
       case OpCode.S2C_PLAYER_HP: {
         const h = parsePayload<S2CPlayerHP>(data);
         if (!h) return;
-        this.notifyHud(`HP ${h.hp}/${h.maxHp}`);
+        this.gameInfo.hp = h.hp;
+        this.gameInfo.maxHp = h.maxHp;
+        this.scene.get('Hud').events.emit('hud:vitals');
         break;
       }
       case OpCode.S2C_PLAYER_STAMINA: {
-        // No HUD bar yet; just absorb. M4.x can render a stamina bar.
-        parsePayload<S2CPlayerStamina>(data);
+        const st = parsePayload<S2CPlayerStamina>(data);
+        if (!st) return;
+        this.gameInfo.stamina = st.stamina;
+        this.gameInfo.maxStamina = st.maxStamina;
+        this.scene.get('Hud').events.emit('hud:vitals');
         break;
       }
       case OpCode.S2C_PLAYER_DIED: {
@@ -621,9 +676,15 @@ export class GameWorld extends Scene {
    * they're holding. Cosmetic only — the inventory state of remote players
    * is otherwise hidden.
    */
-  private updateEquippedSprite(sprite: PlayerSprite, itemId: string | null): void {
+  private updateEquippedSprite(
+    sprite: PlayerSprite,
+    itemId: string | null,
+    bloody = false,
+  ): void {
     const atlasTex = this.textures.get(ATLAS_KEY);
-    const frame = itemId ? ITEM_SPRITES[itemId] : undefined;
+    const bloodyFrame = bloody && itemId ? BLOODY_ITEM_SPRITES[itemId] : undefined;
+    const normalFrame = itemId ? ITEM_SPRITES[itemId] : undefined;
+    const frame = bloodyFrame && atlasTex.has(bloodyFrame) ? bloodyFrame : normalFrame;
     if (!frame || !atlasTex.has(frame)) {
       sprite.hand?.destroy();
       delete sprite.hand;
@@ -697,6 +758,9 @@ export class GameWorld extends Scene {
     }
     this.players.set(p.userId, sprite);
     this.updateHpBar(sprite);
+    if (p.equippedItemId) {
+      this.updateEquippedSprite(sprite, p.equippedItemId, p.equippedItemBloody);
+    }
   }
 
   private despawnPlayer(userId: string): void {

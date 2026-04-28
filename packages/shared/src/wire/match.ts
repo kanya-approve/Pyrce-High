@@ -32,6 +32,8 @@ export interface PublicPlayerInGame {
   /** Item id of what's in the player's hand, or null. Cosmetic — drives the
    *  in-hand sprite overlay; full inventory is self-only. */
   equippedItemId: string | null;
+  /** True when the equipped item has been bloodied by a kill (visual swap). */
+  equippedItemBloody: boolean;
 }
 
 export interface S2CPhaseChange {
@@ -50,6 +52,7 @@ export interface S2CPlayerMoved {
   /** Server tick at which the move was committed (for client interpolation). */
   tickN: number;
   equippedItemId: string | null;
+  equippedItemBloody: boolean;
 }
 
 export interface S2CError {

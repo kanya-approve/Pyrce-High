@@ -8,8 +8,20 @@ export interface ClientGameInfo {
   role: S2CRoleAssigned | null;
   clock: S2CClockTick | null;
   result: S2CGameResult | null;
+  hp: number;
+  maxHp: number;
+  stamina: number;
+  maxStamina: number;
 }
 
 export function newClientGameInfo(): ClientGameInfo {
-  return { role: null, clock: null, result: null };
+  return {
+    role: null,
+    clock: null,
+    result: null,
+    hp: 100,
+    maxHp: 100,
+    stamina: 100,
+    maxStamina: 100,
+  };
 }

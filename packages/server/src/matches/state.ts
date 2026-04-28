@@ -171,8 +171,8 @@ export function countPresences(state: PyrceMatchState): number {
 }
 
 export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
-  const equipped = p.inventory.equipped
-    ? (p.inventory.items.find((i) => i.instanceId === p.inventory.equipped)?.itemId ?? null)
+  const equippedInst = p.inventory.equipped
+    ? p.inventory.items.find((i) => i.instanceId === p.inventory.equipped)
     : null;
   return {
     userId: p.userId,
@@ -183,6 +183,7 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
     hp: p.hp,
     maxHp: p.maxHp,
     isAlive: p.isAlive,
-    equippedItemId: equipped,
+    equippedItemId: equippedInst?.itemId ?? null,
+    equippedItemBloody: equippedInst?.data?.['bloody'] === true,
   };
 }
