@@ -23,7 +23,8 @@ export type GameModeId =
   | 'vampire'
   | 'death_note'
   | 'death_note_classic'
-  | 'extended';
+  | 'extended'
+  | 'slender';
 
 export interface RoleAssignment {
   roleId: RoleId;
@@ -93,17 +94,217 @@ const NORMAL: GameModeDef = {
   ],
 };
 
+const EXTENDED: GameModeDef = {
+  id: 'extended',
+  displayName: 'Extended',
+  description: 'Pure survival — no killer assigned. Make it to 6 AM.',
+  minPlayers: 2,
+  setup: {
+    roles: [{ roleId: 'civilian', count: 'fillRemaining' }],
+    items: [],
+  },
+  winConditions: [
+    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
+  ],
+};
+
+const WITCH: GameModeDef = {
+  id: 'witch',
+  displayName: 'Witch',
+  description: 'A witch among students kills with cursed butterflies. Witch can revive up to 5 times.',
+  minPlayers: 4,
+  setup: {
+    roles: [
+      { roleId: 'witch', count: 1 },
+      { roleId: 'civilian', count: 'fillRemaining' },
+    ],
+    items: [{ roleId: 'witch', itemId: 'knife', equip: true, hotkey: 1 }],
+  },
+  winConditions: [
+    { type: 'roleEliminated', roleId: 'witch', winningAllegiance: 'town' },
+    { type: 'lastFactionStanding' },
+    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
+  ],
+  scriptId: 'witch',
+};
+
+const ZOMBIE: GameModeDef = {
+  id: 'zombie',
+  displayName: 'Zombie',
+  description: 'A 375-HP main zombie infects on contact. The infected eventually turn.',
+  minPlayers: 4,
+  setup: {
+    roles: [
+      { roleId: 'zombie', count: 1 },
+      { roleId: 'civilian', count: 'fillRemaining' },
+    ],
+    items: [],
+  },
+  winConditions: [
+    { type: 'roleEliminated', roleId: 'zombie', winningAllegiance: 'town' },
+    { type: 'lastFactionStanding' },
+    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
+  ],
+  scriptId: 'zombie',
+};
+
+const DOPPELGANGER: GameModeDef = {
+  id: 'doppelganger',
+  displayName: 'Doppelganger',
+  description: '200 HP killer that can copy a corpse to disguise itself. Trust no one.',
+  minPlayers: 4,
+  setup: {
+    roles: [
+      { roleId: 'doppelganger', count: 1 },
+      { roleId: 'civilian', count: 'fillRemaining' },
+    ],
+    items: [{ roleId: 'doppelganger', itemId: 'knife', equip: true, hotkey: 1 }],
+  },
+  winConditions: [
+    { type: 'roleEliminated', roleId: 'doppelganger', winningAllegiance: 'town' },
+    { type: 'lastFactionStanding' },
+    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
+  ],
+};
+
+const SECRET: GameModeDef = {
+  id: 'secret',
+  displayName: 'Secret',
+  description: 'A random hidden role plays out. Nobody knows the rules until they trigger.',
+  minPlayers: 4,
+  setup: {
+    roles: [
+      { roleId: 'killer', count: 1 },
+      { roleId: 'civilian', count: 'fillRemaining' },
+    ],
+    items: [{ roleId: 'killer', itemId: 'knife', equip: true, hotkey: 1 }],
+  },
+  winConditions: [
+    { type: 'roleEliminated', roleId: 'killer', winningAllegiance: 'town' },
+    { type: 'lastFactionStanding' },
+    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
+  ],
+  scriptId: 'secret',
+};
+
+const GHOST: GameModeDef = {
+  id: 'ghost',
+  displayName: 'Ghost',
+  description: 'An invisible spirit kills the unsuspecting; a Whisperer can sense it.',
+  minPlayers: 4,
+  setup: {
+    roles: [
+      { roleId: 'ghost', count: 1 },
+      { roleId: 'whisperer', count: 1, probability: 0.5, minPlayers: 6 },
+      { roleId: 'civilian', count: 'fillRemaining' },
+    ],
+    items: [],
+  },
+  winConditions: [
+    { type: 'roleEliminated', roleId: 'ghost', winningAllegiance: 'town' },
+    { type: 'lastFactionStanding' },
+    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
+  ],
+  scriptId: 'ghost',
+};
+
+const VAMPIRE: GameModeDef = {
+  id: 'vampire',
+  displayName: 'Vampire',
+  description: 'A vampire stalks the school. A Nanaya stalks the vampire.',
+  minPlayers: 4,
+  setup: {
+    roles: [
+      { roleId: 'vampire', count: 1 },
+      { roleId: 'nanaya', count: 1, probability: 0.5, minPlayers: 6 },
+      { roleId: 'civilian', count: 'fillRemaining' },
+    ],
+    items: [
+      { roleId: 'vampire', itemId: 'knife', equip: true, hotkey: 1 },
+      { roleId: 'nanaya', itemId: 'nanatsu_yoru', equip: true, hotkey: 1 },
+    ],
+  },
+  winConditions: [
+    { type: 'roleEliminated', roleId: 'vampire', winningAllegiance: 'town' },
+    { type: 'lastFactionStanding' },
+    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
+  ],
+  scriptId: 'vampire',
+};
+
+const DEATH_NOTE: GameModeDef = {
+  id: 'death_note',
+  displayName: 'Death Note',
+  description: 'Kira writes names; the Shinigami watches. Civilians die mysteriously.',
+  minPlayers: 4,
+  setup: {
+    roles: [
+      { roleId: 'kira', count: 1 },
+      { roleId: 'shinigami', count: 1 },
+      { roleId: 'civilian', count: 'fillRemaining' },
+    ],
+    items: [{ roleId: 'kira', itemId: 'death_note', equip: true, hotkey: 1 }],
+  },
+  winConditions: [
+    { type: 'roleEliminated', roleId: 'kira', winningAllegiance: 'town' },
+    { type: 'lastFactionStanding' },
+    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'killer' },
+  ],
+  scriptId: 'death_note',
+};
+
+const DEATH_NOTE_CLASSIC: GameModeDef = {
+  id: 'death_note_classic',
+  displayName: 'Death Note Classic',
+  description: 'Kira alone. No Shinigami helper, no Eyes. Pure paranoia.',
+  minPlayers: 4,
+  setup: {
+    roles: [
+      { roleId: 'kira', count: 1 },
+      { roleId: 'civilian', count: 'fillRemaining' },
+    ],
+    items: [{ roleId: 'kira', itemId: 'death_note', equip: true, hotkey: 1 }],
+  },
+  winConditions: [
+    { type: 'roleEliminated', roleId: 'kira', winningAllegiance: 'town' },
+    { type: 'lastFactionStanding' },
+    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'killer' },
+  ],
+  scriptId: 'death_note',
+};
+
+const SLENDER: GameModeDef = {
+  id: 'slender',
+  displayName: 'Slender',
+  description: 'Slenderman stalks the school. Find pages, escape before he finds you.',
+  minPlayers: 4,
+  setup: {
+    roles: [
+      { roleId: 'slender', count: 1 },
+      { roleId: 'civilian', count: 'fillRemaining' },
+    ],
+    items: [],
+  },
+  winConditions: [
+    { type: 'roleEliminated', roleId: 'slender', winningAllegiance: 'town' },
+    { type: 'lastFactionStanding' },
+    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
+  ],
+  scriptId: 'slender',
+};
+
 export const MODES: Record<GameModeId, GameModeDef | undefined> = {
   normal: NORMAL,
-  witch: undefined,
-  zombie: undefined,
-  doppelganger: undefined,
-  secret: undefined,
-  ghost: undefined,
-  vampire: undefined,
-  death_note: undefined,
-  death_note_classic: undefined,
-  extended: undefined,
+  extended: EXTENDED,
+  witch: WITCH,
+  zombie: ZOMBIE,
+  doppelganger: DOPPELGANGER,
+  secret: SECRET,
+  ghost: GHOST,
+  vampire: VAMPIRE,
+  death_note: DEATH_NOTE,
+  death_note_classic: DEATH_NOTE_CLASSIC,
+  slender: SLENDER,
 };
 
 export function getMode(id: string): GameModeDef | undefined {

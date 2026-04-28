@@ -21,7 +21,10 @@ export type RoleId =
   | 'shinigami'
   | 'kira'
   | 'detective'
-  | 'beatrice';
+  | 'beatrice'
+  | 'watcher'
+  | 'escaped'
+  | 'slender';
 
 export type Allegiance = 'town' | 'killer' | 'neutral';
 
@@ -147,6 +150,30 @@ export const ROLES: Record<RoleId, RoleDef> = {
     name: 'Beatrice',
     allegiance: 'killer',
     baseHp: 100,
+    baseStamina: 100,
+    description: 'TODO',
+  },
+  watcher: {
+    id: 'watcher',
+    name: 'The Watcher',
+    allegiance: 'neutral',
+    baseHp: 100,
+    baseStamina: 100,
+    description: 'You observe the round from a fixed vantage. You cannot interact.',
+  },
+  escaped: {
+    id: 'escaped',
+    name: 'The Escaped',
+    allegiance: 'killer',
+    baseHp: 100,
+    baseStamina: 100,
+    description: 'You broke out and want to break back in. Spawn at the perimeter.',
+  },
+  slender: {
+    id: 'slender',
+    name: 'Slender',
+    allegiance: 'killer',
+    baseHp: 200,
     baseStamina: 100,
     description: 'TODO',
   },

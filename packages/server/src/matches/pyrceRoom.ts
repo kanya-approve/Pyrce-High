@@ -436,6 +436,7 @@ function handleStartGame(
   // Mode engine: assign roles + grant starting items.
   assignRoles(state, modeDef);
   applyItemGrants(state, modeDef, logger);
+  relocateSpecialSpawns(state);
   state.clock = newClock(state.tickN);
   broadcastPhaseChange(dispatcher, state);
   for (const userId in state.presences) {
@@ -1174,6 +1175,27 @@ function handleTakeFromCorpse(
 }
 
 // ---------- world setup ----------
+
+/** Map a role id → the named spawn it should occupy, when one applies. */
+const SPECIAL_SPAWN_BY_ROLE: Record<string, string> = {
+  watcher: 'Watcher',
+  shinigami: 'ShiniSpawn',
+  escaped: 'EscapedSpawn',
+};
+
+/** Move role-restricted players to their named spawn points after assignment. */
+function relocateSpecialSpawns(state: PyrceMatchState): void {
+  for (const userId in state.players) {
+    const p = state.players[userId];
+    if (!p) continue;
+    const target = SPECIAL_SPAWN_BY_ROLE[p.roleId];
+    if (!target) continue;
+    const spot = tilemap.spawnsById.get(target);
+    if (!spot) continue;
+    p.x = spot.x;
+    p.y = spot.y;
+  }
+}
 
 function assignSpawns(state: PyrceMatchState): void {
   const spawns = tilemap.playerSpawns;
