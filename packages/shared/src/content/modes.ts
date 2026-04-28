@@ -103,15 +103,14 @@ const EXTENDED: GameModeDef = {
     roles: [{ roleId: 'civilian', count: 'fillRemaining' }],
     items: [],
   },
-  winConditions: [
-    { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
-  ],
+  winConditions: [{ type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' }],
 };
 
 const WITCH: GameModeDef = {
   id: 'witch',
   displayName: 'Witch',
-  description: 'A witch among students kills with cursed butterflies. Witch can revive up to 5 times.',
+  description:
+    'A witch among students kills with cursed butterflies. Witch can revive up to 5 times.',
   minPlayers: 4,
   setup: {
     roles: [

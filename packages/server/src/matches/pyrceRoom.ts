@@ -11,10 +11,7 @@ import {
   type C2SContainerPut,
   type C2SContainerTake,
   type C2SDoorToggle,
-  type C2SVoteEndGame,
-  type C2SVoteMode,
-  type S2CVoteEndGameTally,
-  type S2CVoteModeTally,
+  type C2SDragCorpse,
   type C2SInvCraft,
   type C2SInvDrop,
   type C2SInvEquip,
@@ -25,6 +22,9 @@ import {
   type C2SMoveIntent,
   type C2SSearchCorpse,
   type C2STakeFromCorpse,
+  type C2SViewProfile,
+  type C2SVoteEndGame,
+  type C2SVoteMode,
   DIRECTION_DELTAS,
   type Facing,
   getMode,
@@ -56,7 +56,10 @@ import {
   type S2CPlayerHP,
   type S2CPlayerMoved,
   type S2CPlayerStamina,
+  type S2CProfileView,
   type S2CRoleAssigned,
+  type S2CVoteEndGameTally,
+  type S2CVoteModeTally,
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
   WIRE_PROTOCOL_VERSION,
@@ -371,6 +374,12 @@ function handleMessage(
       break;
     case OpCode.C2S_VOTE_END_GAME:
       handleVoteEndGame(state, m, dispatcher, logger);
+      break;
+    case OpCode.C2S_VIEW_PROFILE:
+      handleViewProfile(state, m, dispatcher);
+      break;
+    case OpCode.C2S_DRAG_CORPSE:
+      handleDragCorpse(state, m, dispatcher);
       break;
     case OpCode.C2S_INV_CRAFT:
       handleInvCraft(state, m, dispatcher);
@@ -748,6 +757,85 @@ function consumeCharge(
   sendInvFull(dispatcher, state, sender);
 }
 
+// ---------- body interactions ----------
+
+/** Mirrors DM `Verbs.dm:181` View_Profile (oview 7). */
+function handleViewProfile(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const viewer = state.players[m.sender.userId];
+  if (!viewer) return;
+  const req = parseBody<C2SViewProfile>(m.data);
+  if (!req) return;
+  const target = state.players[req.userId];
+  if (!target) return;
+  const dx = Math.abs(target.x - viewer.x);
+  const dy = Math.abs(target.y - viewer.y);
+  if (Math.max(dx, dy) > 7) {
+    sendError(dispatcher, m.sender, 'too_far', 'profile is out of range');
+    return;
+  }
+  const condition = describeCondition(target);
+  const payload: S2CProfileView = {
+    userId: target.userId,
+    username: target.username,
+    hp: target.hp,
+    maxHp: target.maxHp,
+    isAlive: target.isAlive,
+    condition,
+  };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_PROFILE_VIEW,
+    JSON.stringify(payload),
+    [m.sender],
+    null,
+    true,
+  );
+}
+
+function describeCondition(p: PlayerInGame): string {
+  if (!p.isAlive) return 'Dead';
+  const ratio = p.maxHp > 0 ? p.hp / p.maxHp : 0;
+  if (ratio > 0.99) return 'Perfect';
+  if (ratio > 0.7) return 'Fine';
+  if (ratio > 0.6) return 'Hurt';
+  if (ratio > 0.4) return 'Badly Wounded';
+  if (ratio > 0.2) return 'Severely Injured';
+  return 'Dying…';
+}
+
+/** Drag a corpse one tile in the dragger's facing direction. */
+function handleDragCorpse(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SDragCorpse>(m.data);
+  if (!req) return;
+  const corpse = state.corpses[req.corpseId];
+  if (!corpse) return;
+  const dx = Math.abs(corpse.x - player.x);
+  const dy = Math.abs(corpse.y - player.y);
+  if (Math.max(dx, dy) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'corpse not adjacent');
+    return;
+  }
+  const delta = DIRECTION_DELTAS[player.facing];
+  if (!delta) return;
+  const nx = corpse.x + delta.dx;
+  const ny = corpse.y + delta.dy;
+  if (!tilemap.isPassable(nx, ny)) return;
+  corpse.x = nx;
+  corpse.y = ny;
+  broadcastCorpseUpdate(dispatcher, corpse);
+}
+
 // ---------- voting ----------
 
 function handleVoteMode(
@@ -770,10 +858,7 @@ function handleVoteMode(
   broadcastModeTally(dispatcher, state);
 }
 
-function broadcastModeTally(
-  dispatcher: nkruntime.MatchDispatcher,
-  state: PyrceMatchState,
-): void {
+function broadcastModeTally(dispatcher: nkruntime.MatchDispatcher, state: PyrceMatchState): void {
   const tally: { [modeId: string]: number } = {};
   for (const userId in state.modeVotes ?? {}) {
     const m = state.modeVotes?.[userId];

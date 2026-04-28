@@ -129,3 +129,23 @@ export interface S2CVoteEndGameTally {
   /** True when the threshold has been met and the round is being ended. */
   resolved: boolean;
 }
+
+// ----- body interactions -----
+
+export interface C2SViewProfile {
+  userId: string;
+}
+
+export interface C2SDragCorpse {
+  corpseId: string;
+}
+
+export interface S2CProfileView {
+  userId: string;
+  username: string;
+  hp: number;
+  maxHp: number;
+  isAlive: boolean;
+  /** Human readable condition: "Perfect" / "Hurt" / "Dying…" / "Dead". */
+  condition: string;
+}

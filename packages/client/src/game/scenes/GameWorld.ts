@@ -22,7 +22,6 @@ import {
   type S2CDoorState,
   type S2CFxSmoke,
   type S2CFxSound,
-  type S2CVoteEndGameTally,
   type S2CGameResult,
   type S2CInitialSnapshot,
   type S2CInvDelta,
@@ -32,7 +31,9 @@ import {
   type S2CPlayerHP,
   type S2CPlayerMoved,
   type S2CPlayerStamina,
+  type S2CProfileView,
   type S2CRoleAssigned,
+  type S2CVoteEndGameTally,
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
   type TilemapJson,
@@ -411,9 +412,7 @@ export class GameWorld extends Scene {
     this.endGameVotedYes = !this.endGameVotedYes;
     void this.match.sendMatch(OpCode.C2S_VOTE_END_GAME, { vote: this.endGameVotedYes });
     this.notifyHud(
-      this.endGameVotedYes
-        ? 'Voted to end the round (V to retract)'
-        : 'Withdrew end-round vote',
+      this.endGameVotedYes ? 'Voted to end the round (V to retract)' : 'Withdrew end-round vote',
     );
   }
 
@@ -587,6 +586,12 @@ export class GameWorld extends Scene {
         const t = parsePayload<S2CVoteEndGameTally>(data);
         if (!t) return;
         this.notifyHud(`End-round vote: ${t.yes}/${t.alive} alive`);
+        break;
+      }
+      case OpCode.S2C_PROFILE_VIEW: {
+        const p = parsePayload<S2CProfileView>(data);
+        if (!p) return;
+        this.notifyHud(`${p.username}: ${p.condition} (${p.hp}/${p.maxHp})`);
         break;
       }
       case OpCode.S2C_DOOR_STATE: {
@@ -815,6 +820,15 @@ export class GameWorld extends Scene {
     if (p.equippedItemId) {
       this.updateEquippedSprite(sprite, p.equippedItemId, p.equippedItemBloody);
     }
+    // Right-click to view profile (DM's `oview(7)` View_Profile verb).
+    rect.setInteractive({ useHandCursor: true });
+    rect.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.rightButtonDown() || pointer.event.shiftKey) {
+        if (p.userId !== this.match.userId) {
+          void this.match.sendMatch(OpCode.C2S_VIEW_PROFILE, { userId: p.userId });
+        }
+      }
+    });
   }
 
   private despawnPlayer(userId: string): void {

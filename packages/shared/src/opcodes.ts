@@ -45,6 +45,9 @@ export enum OpCode {
   C2S_VOTE_MODE = 1800,
   C2S_VOTE_END_GAME = 1801,
 
+  C2S_VIEW_PROFILE = 1900,
+  C2S_DRAG_CORPSE = 1901,
+
   // ===== Server → Client =====
   S2C_HELLO = 2000,
   S2C_ERROR = 2001,
@@ -86,4 +89,6 @@ export enum OpCode {
 
   S2C_VOTE_MODE_TALLY = 2810,
   S2C_VOTE_END_GAME_TALLY = 2811,
+
+  S2C_PROFILE_VIEW = 2900,
 }

@@ -29,7 +29,10 @@ export class Lobby extends Scene {
   private presences = new Map<string, Presence>();
   private playerListText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
-  private modeButtons = new Map<string, { bg: Phaser.GameObjects.Rectangle; txt: Phaser.GameObjects.Text }>();
+  private modeButtons = new Map<
+    string,
+    { bg: Phaser.GameObjects.Rectangle; txt: Phaser.GameObjects.Text }
+  >();
   private myVote: string | null = null;
   private tally: { [modeId: string]: number } = {};
 
@@ -169,9 +172,7 @@ export class Lobby extends Scene {
 
   /** One button per registered mode. Click toggles your vote. */
   private buildModeVoteButtons(width: number): void {
-    const modes = Object.values(MODES).filter(
-      (m): m is NonNullable<typeof m> => m !== undefined,
-    );
+    const modes = Object.values(MODES).filter((m): m is NonNullable<typeof m> => m !== undefined);
     const btnW = 180;
     const btnH = 28;
     const gap = 6;
