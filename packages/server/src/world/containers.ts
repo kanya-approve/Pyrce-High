@@ -157,9 +157,8 @@ function newContainerId(point: ContainerPoint): string {
 }
 
 function applyLoot(rules: LootRule[]): ItemInstance[] {
-  // Use addItem on a throwaway InventoryState so stack-merging semantics
-  // are reused. It's a trivially small allocation.
-  const inv: InventoryState = {
+  // addItem is pure — returns a new InventoryState. Reassign each pass.
+  let inv: InventoryState = {
     items: [],
     hotkeys: [null, null, null, null, null],
     equipped: null,
@@ -171,7 +170,8 @@ function applyLoot(rules: LootRule[]): ItemInstance[] {
     const min = rule.min ?? 1;
     const max = rule.max ?? min;
     const count = min + Math.floor(Math.random() * (max - min + 1));
-    addItem(inv, rule.itemId, count);
+    const r = addItem(inv, rule.itemId, count);
+    if (r) inv = r.inventory;
   }
   return inv.items;
 }
