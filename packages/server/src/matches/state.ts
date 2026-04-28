@@ -109,6 +109,12 @@ export interface PyrceMatchState {
 
   /** Persistent door open/closed state, keyed by `${x},${y}`. */
   openDoors?: { [coordKey: string]: boolean };
+
+  /** Lobby mode votes: userId → modeId. Cleared on InGame transition. */
+  modeVotes?: { [userId: string]: string };
+
+  /** In-round end-game votes: set of userIds who've voted yes. */
+  endGameVotes?: { [userId: string]: true };
 }
 
 /** Build a fresh PlayerInGame, including a deep copy of the empty inventory. */

@@ -22,6 +22,7 @@ import {
   type S2CDoorState,
   type S2CFxSmoke,
   type S2CFxSound,
+  type S2CVoteEndGameTally,
   type S2CGameResult,
   type S2CInitialSnapshot,
   type S2CInvDelta,
@@ -104,6 +105,7 @@ export class GameWorld extends Scene {
     G: Phaser.Input.Keyboard.Key;
     C: Phaser.Input.Keyboard.Key;
     I: Phaser.Input.Keyboard.Key;
+    V: Phaser.Input.Keyboard.Key;
     ONE: Phaser.Input.Keyboard.Key;
     TWO: Phaser.Input.Keyboard.Key;
     THREE: Phaser.Input.Keyboard.Key;
@@ -172,7 +174,7 @@ export class GameWorld extends Scene {
       ) as typeof this.cursors;
       this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D', false) as typeof this.wasdKeys;
       this.actionKeys = this.input.keyboard.addKeys(
-        'E,F,G,C,I,ONE,TWO,THREE,FOUR,FIVE',
+        'E,F,G,C,I,V,ONE,TWO,THREE,FOUR,FIVE',
         false,
       ) as typeof this.actionKeys;
       const guard = (fn: () => void) => () => {
@@ -198,6 +200,10 @@ export class GameWorld extends Scene {
       this.actionKeys.I.on(
         'down',
         guard(() => this.scene.get('Hud').events.emit('inv:refresh')),
+      );
+      this.actionKeys.V.on(
+        'down',
+        guard(() => this.handleEndGameVote()),
       );
       this.actionKeys.ONE.on(
         'down',
@@ -399,6 +405,18 @@ export class GameWorld extends Scene {
     void this.match.sendMatch(OpCode.C2S_ATTACK, {});
   }
 
+  /** Toggle our yes-vote on the in-round end-game referendum. */
+  private endGameVotedYes = false;
+  private handleEndGameVote(): void {
+    this.endGameVotedYes = !this.endGameVotedYes;
+    void this.match.sendMatch(OpCode.C2S_VOTE_END_GAME, { vote: this.endGameVotedYes });
+    this.notifyHud(
+      this.endGameVotedYes
+        ? 'Voted to end the round (V to retract)'
+        : 'Withdrew end-round vote',
+    );
+  }
+
   private handleHotkey(slot: 1 | 2 | 3 | 4 | 5): void {
     const ref = this.inventory.hotkeys[slot - 1];
     if (!ref) return;
@@ -563,6 +581,12 @@ export class GameWorld extends Scene {
         const f = parsePayload<S2CFxSound>(data);
         if (!f) return;
         this.playSfx(f.key, f.x, f.y, f.volume);
+        break;
+      }
+      case OpCode.S2C_VOTE_END_GAME_TALLY: {
+        const t = parsePayload<S2CVoteEndGameTally>(data);
+        if (!t) return;
+        this.notifyHud(`End-round vote: ${t.yes}/${t.alive} alive`);
         break;
       }
       case OpCode.S2C_DOOR_STATE: {

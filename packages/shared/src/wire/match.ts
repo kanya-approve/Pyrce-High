@@ -100,3 +100,32 @@ export interface S2CFxSound {
   /** 0..1 base volume. */
   volume: number;
 }
+
+// ----- voting -----
+
+export interface C2SVoteMode {
+  /** Mode id; pass empty string or null to withdraw the vote. */
+  modeId: string | null;
+}
+
+export interface C2SVoteEndGame {
+  /** true to vote yes, false to withdraw. */
+  vote: boolean;
+}
+
+export interface S2CVoteModeTally {
+  /** modeId → vote count. */
+  tally: { [modeId: string]: number };
+  /** Total players who have voted at least once. */
+  voted: number;
+  /** Total presences in the match. */
+  total: number;
+}
+
+export interface S2CVoteEndGameTally {
+  yes: number;
+  /** Number of alive players (the denominator for the >50% threshold). */
+  alive: number;
+  /** True when the threshold has been met and the round is being ended. */
+  resolved: boolean;
+}

@@ -11,6 +11,10 @@ import {
   type C2SContainerPut,
   type C2SContainerTake,
   type C2SDoorToggle,
+  type C2SVoteEndGame,
+  type C2SVoteMode,
+  type S2CVoteEndGameTally,
+  type S2CVoteModeTally,
   type C2SInvCraft,
   type C2SInvDrop,
   type C2SInvEquip,
@@ -362,6 +366,12 @@ function handleMessage(
     case OpCode.C2S_DOOR_TOGGLE:
       handleDoorToggle(state, m, dispatcher);
       break;
+    case OpCode.C2S_VOTE_MODE:
+      handleVoteMode(state, m, dispatcher);
+      break;
+    case OpCode.C2S_VOTE_END_GAME:
+      handleVoteEndGame(state, m, dispatcher, logger);
+      break;
     case OpCode.C2S_INV_CRAFT:
       handleInvCraft(state, m, dispatcher);
       break;
@@ -399,7 +409,8 @@ function handleStartGame(
       // ignore
     }
   }
-  state.gameModeId = req.gameModeId ?? 'normal';
+  // If host didn't specify, pick the lobby vote leader (ties broken by id).
+  state.gameModeId = req.gameModeId ?? leadingMode(state) ?? 'normal';
   const modeDef = getMode(state.gameModeId);
   if (!modeDef) {
     sendError(dispatcher, m.sender, 'unknown_mode', `mode ${state.gameModeId} not registered`);
@@ -415,6 +426,8 @@ function handleStartGame(
     return;
   }
   state.phase = MatchPhase.InGame;
+  state.modeVotes = {};
+  state.endGameVotes = {};
   assignSpawns(state);
   state.containers = seedContainers();
   state.groundItems = {};
@@ -732,6 +745,115 @@ function consumeCharge(
   if (!removed) return;
   player.inventory = removed.inventory;
   sendInvFull(dispatcher, state, sender);
+}
+
+// ---------- voting ----------
+
+function handleVoteMode(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.Lobby) return;
+  const req = parseBody<C2SVoteMode>(m.data);
+  if (!req) return;
+  state.modeVotes ??= {};
+  if (req.modeId === null || req.modeId === '') {
+    delete state.modeVotes[m.sender.userId];
+  } else if (getMode(req.modeId)) {
+    state.modeVotes[m.sender.userId] = req.modeId;
+  } else {
+    sendError(dispatcher, m.sender, 'unknown_mode', `mode ${req.modeId} not registered`);
+    return;
+  }
+  broadcastModeTally(dispatcher, state);
+}
+
+function broadcastModeTally(
+  dispatcher: nkruntime.MatchDispatcher,
+  state: PyrceMatchState,
+): void {
+  const tally: { [modeId: string]: number } = {};
+  for (const userId in state.modeVotes ?? {}) {
+    const m = state.modeVotes?.[userId];
+    if (m) tally[m] = (tally[m] ?? 0) + 1;
+  }
+  const payload: S2CVoteModeTally = {
+    tally,
+    voted: Object.keys(state.modeVotes ?? {}).length,
+    total: countPresences(state),
+  };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_VOTE_MODE_TALLY,
+    JSON.stringify(payload),
+    null,
+    null,
+    true,
+  );
+}
+
+function leadingMode(state: PyrceMatchState): string | null {
+  const tally: { [modeId: string]: number } = {};
+  for (const userId in state.modeVotes ?? {}) {
+    const m = state.modeVotes?.[userId];
+    if (m) tally[m] = (tally[m] ?? 0) + 1;
+  }
+  let bestId: string | null = null;
+  let bestN = 0;
+  for (const id in tally) {
+    const n = tally[id] ?? 0;
+    if (n > bestN || (n === bestN && bestId !== null && id < bestId)) {
+      bestN = n;
+      bestId = id;
+    }
+  }
+  return bestId;
+}
+
+function handleVoteEndGame(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+  logger: nkruntime.Logger,
+): void {
+  if (state.phase !== MatchPhase.InGame || state.ended) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SVoteEndGame>(m.data);
+  if (!req) return;
+  state.endGameVotes ??= {};
+  if (req.vote) state.endGameVotes[m.sender.userId] = true;
+  else delete state.endGameVotes[m.sender.userId];
+
+  let alive = 0;
+  for (const uid in state.players) if (state.players[uid]?.isAlive) alive++;
+  const yes = Object.keys(state.endGameVotes).length;
+  // Strict majority of alive players.
+  const resolved = alive > 0 && yes * 2 > alive;
+  const payload: S2CVoteEndGameTally = { yes, alive, resolved };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_VOTE_END_GAME_TALLY,
+    JSON.stringify(payload),
+    null,
+    null,
+    true,
+  );
+  if (resolved) {
+    state.ended = true;
+    state.phase = MatchPhase.Ending;
+    const modeDef = getMode(state.gameModeId ?? '');
+    const reveals = buildReveals(state);
+    const result: S2CGameResult = {
+      modeId: modeDef?.id ?? 'normal',
+      reason: 'end_game_vote',
+      summary: 'Round ended by player vote.',
+      reveals,
+      winners: [],
+    };
+    broadcastGameResult(dispatcher, result);
+    refreshLabel(dispatcher, state);
+    logger.info('round end via end-game vote (%d/%d alive voted yes)', yes, alive);
+  }
 }
 
 function handleDoorToggle(
