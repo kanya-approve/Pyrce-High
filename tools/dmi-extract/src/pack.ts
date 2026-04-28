@@ -83,13 +83,7 @@ function nextPow2(n: number): number {
 }
 
 /** Slice an RGBA region out of a source PNG into a fresh Buffer. */
-export function sliceRgba(
-  src: PNG,
-  sx: number,
-  sy: number,
-  width: number,
-  height: number,
-): Buffer {
+export function sliceRgba(src: PNG, sx: number, sy: number, width: number, height: number): Buffer {
   const out = Buffer.alloc(width * height * 4);
   for (let y = 0; y < height; y++) {
     const srcOff = ((sy + y) * src.width + sx) * 4;

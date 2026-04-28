@@ -11,6 +11,8 @@ const NAKAMA_CONFIG = {
 
 document.addEventListener('DOMContentLoaded', () => {
   const game = StartGame('game-container');
+  // Exposed only for browser smoke tests / dev console inspection.
+  (window as unknown as { __pyrceGame: typeof game }).__pyrceGame = game;
 
   // Phaser listens on window by default, but the game container needs focus
   // for some browsers / screen readers to route keys correctly. Focus it on

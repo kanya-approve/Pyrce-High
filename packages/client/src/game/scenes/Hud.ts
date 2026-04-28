@@ -47,7 +47,10 @@ export class Hud extends Scene {
       .setDepth(1000);
 
     // Decorative heart icon next to the role banner.
-    if (this.textures.exists(ATLAS_KEY) && this.textures.get(ATLAS_KEY).has('root/healthhud/_/S/0')) {
+    if (
+      this.textures.exists(ATLAS_KEY) &&
+      this.textures.get(ATLAS_KEY).has('root/healthhud/_/S/0')
+    ) {
       this.add
         .image(width / 2 - 110, 26, ATLAS_KEY, 'root/healthhud/_/S/0')
         .setScrollFactor(0)

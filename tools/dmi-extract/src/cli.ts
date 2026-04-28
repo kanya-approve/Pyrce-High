@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { PNG } from 'pngjs';
 import { iterCells, parseDmi } from './dmi.js';
@@ -25,7 +25,7 @@ const frameMeta: Array<{
 for (const path of dmiPaths) {
   const buf = readFileSync(path);
   const sourceName = makeSourceName(path, srcRoot);
-  let parsed;
+  let parsed: ReturnType<typeof parseDmi>;
   try {
     parsed = parseDmi(buf, sourceName);
   } catch (e) {
@@ -94,8 +94,9 @@ function walk(root: string): string[] {
   const out: string[] = [];
   const stack: string[] = [root];
   while (stack.length) {
-    const p = stack.pop()!;
-    let s;
+    const p = stack.pop();
+    if (!p) break;
+    let s: ReturnType<typeof statSync>;
     try {
       s = statSync(p);
     } catch {
@@ -108,7 +109,9 @@ function walk(root: string): string[] {
 }
 
 function makeSourceName(path: string, root: string): string {
-  return relative(root, path).replace(/\\/g, '/').replace(/\.dmi$/i, '');
+  return relative(root, path)
+    .replace(/\\/g, '/')
+    .replace(/\.dmi$/i, '');
 }
 
 function makeKey(source: string, state: string, dir: string, frame: number): string {

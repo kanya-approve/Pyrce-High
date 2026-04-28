@@ -108,7 +108,8 @@ function computeAmbient(clock: S2CClockTick | null): number {
   if (!clock) return 0;
   // Convert to a 0..1 phase of the night where 0 = 6 PM, 0.5 = midnight,
   // 1.0 = 6 AM. We lerp ambient between dusk → midnight → dawn.
-  const hour24 = clock.ampm === 'PM' ? clock.gameHour + 12 : clock.gameHour === 12 ? 0 : clock.gameHour;
+  const hour24 =
+    clock.ampm === 'PM' ? clock.gameHour + 12 : clock.gameHour === 12 ? 0 : clock.gameHour;
   const minutesFromDusk = (((hour24 - 18 + 24) % 24) % 24) * 60;
   const phase = Math.min(1, Math.max(0, minutesFromDusk / (12 * 60)));
   if (phase <= 0.5) {

@@ -158,25 +158,65 @@ export class GameWorld extends Scene {
     if (me) this.cameras.main.startFollow(me.rect, true, 0.1, 0.1);
 
     if (this.input.keyboard) {
-      this.cursors = this.input.keyboard.createCursorKeys();
-      this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D') as typeof this.wasdKeys;
+      // enableCapture: false on every game-bound key — Phaser's keyboard
+      // plugin captures keys at the document level and calls preventDefault
+      // on them, which would stop our letters/numbers from reaching the
+      // chat HTMLInputElement when it's focused. We poll isDown ourselves so
+      // capture isn't needed. Arrows also disabled so chat-cursor navigation
+      // and Tab/Enter behaviour aren't broken inside the input field.
+      this.cursors = this.input.keyboard.addKeys(
+        { up: 'UP', down: 'DOWN', left: 'LEFT', right: 'RIGHT', space: 'SPACE', shift: 'SHIFT' },
+        false,
+      ) as typeof this.cursors;
+      this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D', false) as typeof this.wasdKeys;
       this.actionKeys = this.input.keyboard.addKeys(
         'E,F,G,C,I,ONE,TWO,THREE,FOUR,FIVE',
+        false,
       ) as typeof this.actionKeys;
       const guard = (fn: () => void) => () => {
         if (isTextInputFocused()) return;
         fn();
       };
-      this.actionKeys.E.on('down', guard(() => this.handleInteract()));
-      this.actionKeys.F.on('down', guard(() => this.handleAttack()));
-      this.actionKeys.G.on('down', guard(() => this.handleDropEquipped()));
-      this.actionKeys.C.on('down', guard(() => this.handleCraft('spear')));
-      this.actionKeys.I.on('down', guard(() => this.scene.get('Hud').events.emit('inv:refresh')));
-      this.actionKeys.ONE.on('down', guard(() => this.handleHotkey(1)));
-      this.actionKeys.TWO.on('down', guard(() => this.handleHotkey(2)));
-      this.actionKeys.THREE.on('down', guard(() => this.handleHotkey(3)));
-      this.actionKeys.FOUR.on('down', guard(() => this.handleHotkey(4)));
-      this.actionKeys.FIVE.on('down', guard(() => this.handleHotkey(5)));
+      this.actionKeys.E.on(
+        'down',
+        guard(() => this.handleInteract()),
+      );
+      this.actionKeys.F.on(
+        'down',
+        guard(() => this.handleAttack()),
+      );
+      this.actionKeys.G.on(
+        'down',
+        guard(() => this.handleDropEquipped()),
+      );
+      this.actionKeys.C.on(
+        'down',
+        guard(() => this.handleCraft('spear')),
+      );
+      this.actionKeys.I.on(
+        'down',
+        guard(() => this.scene.get('Hud').events.emit('inv:refresh')),
+      );
+      this.actionKeys.ONE.on(
+        'down',
+        guard(() => this.handleHotkey(1)),
+      );
+      this.actionKeys.TWO.on(
+        'down',
+        guard(() => this.handleHotkey(2)),
+      );
+      this.actionKeys.THREE.on(
+        'down',
+        guard(() => this.handleHotkey(3)),
+      );
+      this.actionKeys.FOUR.on(
+        'down',
+        guard(() => this.handleHotkey(4)),
+      );
+      this.actionKeys.FIVE.on(
+        'down',
+        guard(() => this.handleHotkey(5)),
+      );
     }
 
     this.statusText = this.add
@@ -613,9 +653,7 @@ export class GameWorld extends Scene {
     // Friendly tint ring under the sprite — gives me-vs-others visual cue
     // until we have proper outlines / nameplates per faction.
     const ringColor = isMe ? 0x4cc8ff : 0xff7755;
-    const outline = this.add
-      .rectangle(x, y, TILE - 2, TILE - 2)
-      .setStrokeStyle(2, ringColor, 0.7);
+    const outline = this.add.rectangle(x, y, TILE - 2, TILE - 2).setStrokeStyle(2, ringColor, 0.7);
     const cardinal = facingToCardinal(p.facing);
     const frame = CHARACTER_SPRITES.male[cardinal];
     const rect = this.add.sprite(x, y, ATLAS_KEY, frame);
@@ -699,10 +737,7 @@ export class GameWorld extends Scene {
     const rect: Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle = this.textures
       .get(ATLAS_KEY)
       .has(CHARACTER_SPRITES.dead_male)
-      ? this.add
-          .image(x, y, ATLAS_KEY, CHARACTER_SPRITES.dead_male)
-          .setDepth(1.5)
-          .setTint(0xcc6666)
+      ? this.add.image(x, y, ATLAS_KEY, CHARACTER_SPRITES.dead_male).setDepth(1.5).setTint(0xcc6666)
       : this.add
           .rectangle(x, y, TILE - 4, TILE - 4, 0x551111, 0.85)
           .setStrokeStyle(2, 0x880000)

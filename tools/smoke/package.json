@@ -15,5 +15,8 @@
   "dependencies": {
     "@heroiclabs/nakama-js": "^2.8.0",
     "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.42.0"
   }
 }
