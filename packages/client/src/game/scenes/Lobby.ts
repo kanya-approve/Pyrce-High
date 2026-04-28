@@ -93,6 +93,7 @@ export class Lobby extends Scene {
             matchId: this.matchId,
             players: payload.players,
             gameModeId: payload.gameModeId ?? null,
+            hostUserId: this.hostUserId,
           });
         }
       } else if (msg.op_code === OpCode.S2C_ERROR) {

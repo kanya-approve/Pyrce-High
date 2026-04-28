@@ -1,4 +1,4 @@
-import { ITEMS, type ItemDef } from '@pyrce/shared';
+import { ATLAS_KEY, ITEMS, type ItemDef } from '@pyrce/shared';
 import { Scene } from 'phaser';
 import type { ClientGameInfo } from '../../state/game';
 import type { ClientInventory } from '../../state/inventory';
@@ -45,6 +45,14 @@ export class Hud extends Scene {
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(1000);
+
+    // Decorative heart icon next to the role banner.
+    if (this.textures.exists(ATLAS_KEY) && this.textures.get(ATLAS_KEY).has('root/healthhud/_/S/0')) {
+      this.add
+        .image(width / 2 - 110, 26, ATLAS_KEY, 'root/healthhud/_/S/0')
+        .setScrollFactor(0)
+        .setDepth(1000);
+    }
 
     this.roleText = this.add
       .text(width / 2, 12, '', {

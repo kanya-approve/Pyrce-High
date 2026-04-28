@@ -51,6 +51,7 @@ interface GameWorldData {
   matchId: string;
   players: PublicPlayerInGame[];
   gameModeId: string | null;
+  hostUserId: string | null;
 }
 
 interface PlayerSprite {
@@ -62,6 +63,7 @@ interface PlayerSprite {
   label: Phaser.GameObjects.Text;
   hpBg: Phaser.GameObjects.Rectangle;
   hpFill: Phaser.GameObjects.Rectangle;
+  crown?: Phaser.GameObjects.Image;
   state: PublicPlayerInGame;
   tween?: Phaser.Tweens.Tween;
 }
@@ -116,6 +118,7 @@ export class GameWorld extends Scene {
   }> = [];
   private corpseSprites = new Map<string, CorpseSprite>();
   private deathOverlay?: Phaser.GameObjects.Rectangle;
+  private hostUserId: string | null = null;
 
   constructor() {
     super('GameWorld');
@@ -123,6 +126,7 @@ export class GameWorld extends Scene {
 
   init(data: GameWorldData): void {
     this.matchId = data.matchId;
+    this.hostUserId = data.hostUserId ?? null;
     this.players.clear();
     this.groundSprites.clear();
     this.inventory = newClientInventory();
@@ -526,6 +530,30 @@ export class GameWorld extends Scene {
     }
   }
 
+  /**
+   * Play the smokey.dmi puff anim at world coords. Hooked to the smoke_bomb
+   * use op when the server starts broadcasting it; for now exposed for any
+   * client-side trigger.
+   */
+  playSmoke(worldX: number, worldY: number): void {
+    if (!this.anims.exists('fx.smoke')) {
+      const atlasTex = this.textures.get(ATLAS_KEY);
+      const frames = [...Array(16).keys()]
+        .map((i) => `root/smokey/_/S/${i}`)
+        .filter((k) => atlasTex.has(k));
+      if (frames.length === 0) return;
+      this.anims.create({
+        key: 'fx.smoke',
+        frames: frames.map((k) => ({ key: ATLAS_KEY, frame: k })),
+        frameRate: 12,
+        repeat: 0,
+      });
+    }
+    const fx = this.add.sprite(worldX, worldY, ATLAS_KEY).setDepth(900).setScale(2);
+    fx.play('fx.smoke');
+    fx.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => fx.destroy());
+  }
+
   /** Stable hair pick from userId so the same player looks the same each round. */
   private pickHair(userId: string): string {
     let h = 0;
@@ -579,6 +607,11 @@ export class GameWorld extends Scene {
       hpFill,
       state: p,
     };
+    if (p.userId === this.hostUserId && atlasTex.has('root/crown/_/S/0')) {
+      sprite.crown = this.add
+        .image(x, y - TILE / 2 - 4, ATLAS_KEY, 'root/crown/_/S/0')
+        .setDepth(rect.depth + 0.02);
+    }
     this.players.set(p.userId, sprite);
     this.updateHpBar(sprite);
   }
@@ -589,6 +622,7 @@ export class GameWorld extends Scene {
     sprite.tween?.stop();
     sprite.rect.destroy();
     sprite.hair.destroy();
+    sprite.crown?.destroy();
     sprite.outline.destroy();
     sprite.label.destroy();
     sprite.hpBg.destroy();
@@ -698,13 +732,23 @@ export class GameWorld extends Scene {
       sprite.rect.setFrame(CHARACTER_SPRITES.male[cardinal]);
       sprite.hair.setFrame(hairFrame(sprite.hairId, cardinal));
     });
+    const targets: Phaser.GameObjects.GameObject[] = [
+      sprite.rect,
+      sprite.hair,
+      sprite.outline,
+      sprite.label,
+      sprite.hpBg,
+      sprite.hpFill,
+    ];
+    if (sprite.crown) targets.push(sprite.crown);
     sprite.tween = this.tweens.add({
-      targets: [sprite.rect, sprite.hair, sprite.outline, sprite.label, sprite.hpBg, sprite.hpFill],
+      targets,
       x: (t: Phaser.GameObjects.GameObject) =>
         t === sprite.hpFill ? targetX - (TILE - 4) / 2 : targetX,
       y: (t: Phaser.GameObjects.GameObject) => {
         if (t === sprite.label) return targetY - TILE / 2 - 4;
         if (t === sprite.hpBg || t === sprite.hpFill) return targetY - TILE / 2 - 18;
+        if (t === sprite.crown) return targetY - TILE / 2 - 4;
         return targetY;
       },
       duration: MOVE_TWEEN_MS,
