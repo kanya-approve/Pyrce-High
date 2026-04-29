@@ -1,12 +1,6 @@
-import type {
-  C2SChat,
-  C2STypingBegin,
-  C2STypingEnd,
-  S2CChatMessage,
-  S2CTyping,
-} from '@pyrce/shared';
 import {
   type C2SAttack,
+  type C2SChat,
   type C2SContainerLook,
   type C2SContainerPut,
   type C2SContainerTake,
@@ -29,12 +23,15 @@ import {
   type C2SSearchConsent,
   type C2SSearchCorpse,
   type C2STakeFromCorpse,
+  type C2STypingBegin,
+  type C2STypingEnd,
   type C2SVampireDrain,
   type C2SVendingBuy,
   type C2SViewProfile,
   type C2SVoteEndGame,
   type C2SVoteKick,
   type C2SVoteMode,
+  ChatChannel,
   DIRECTION_DELTAS,
   type Facing,
   type GameModeId,
@@ -48,6 +45,7 @@ import {
   ROLES,
   type RoleId,
   type S2CAnnouncement,
+  type S2CChatMessage,
   type S2CClockTick,
   type S2CContainerContents,
   type S2CCorpseContents,
@@ -81,6 +79,7 @@ import {
   type S2CSearchRequest,
   type S2CSelfRoleState,
   type S2CStudentRoster,
+  type S2CTyping,
   type S2CVoteEndGameTally,
   type S2CVoteKickTally,
   type S2CVoteModeTally,
@@ -178,7 +177,8 @@ export function matchJoinAttempt(
     return { state, accept: true };
   }
   if (state.phase !== MatchPhase.Lobby) {
-    return { state, accept: false, rejectMessage: 'match_in_progress' };
+    // Allow late joiners through to become Watchers via the C2S opcode.
+    return { state, accept: true };
   }
   return { state, accept: true };
 }
@@ -267,6 +267,26 @@ export function matchLoop(
   // Whisperer ghost-sense: periodic directional clue. Cheap; only fires
   // every 20 ticks (~2s) to avoid spamming.
   if (tick % 20 === 0) broadcastGhostSenseToWhisperers(state, dispatcher);
+
+  // Vampire hunger: every ~8s drain 1 HP from every alive vampire so they
+  // have to keep feeding to survive. Floors at 1 HP — hunger alone won't
+  // finish them, but it forces them to act.
+  if (tick % 80 === 0) {
+    for (const uid in state.players) {
+      const p = state.players[uid];
+      if (!p || !p.isAlive || p.roleId !== 'vampire' || p.hp <= 1) continue;
+      p.hp -= 1;
+      broadcastPlayerHealth(dispatcher, p);
+      const pres = state.presences[uid];
+      if (pres) sendPlayerHP(dispatcher, pres, p);
+      if (p.hp <= 20 && p.hp > 18) {
+        broadcastAnnouncement(dispatcher, {
+          kind: 'mode_event',
+          message: `${p.username} looks pale and weak.`,
+        });
+      }
+    }
+  }
 
   // Bleed tick: every 10 ticks (1s) deal 2 HP to anyone with an active
   // bleed timer; expire when the timer's reached.
@@ -517,6 +537,9 @@ function handleMessage(
       break;
     case OpCode.C2S_DOOR_CODE_ENTRY:
       handleDoorCodeEntry(state, m, dispatcher);
+      break;
+    case OpCode.C2S_JOIN_AS_WATCHER:
+      handleJoinAsWatcher(state, m, dispatcher);
       break;
     case OpCode.C2S_THROW:
       handleThrow(state, m, tick, dispatcher);
@@ -1053,6 +1076,12 @@ function handleInvUse(
       // feather pulls the victim to the path's end and holds them frozen
       // for 5 seconds. Allies can attack the feather's victim normally
       // during that window.).
+      if (hitVictim) {
+        broadcastAnnouncement(dispatcher, {
+          kind: 'mode_event',
+          message: `${player.username} reaches out — a black feather curls through the air.`,
+        });
+      }
       if (hitVictim && path.length > 0) {
         const last = path[path.length - 1];
         if (last) {
@@ -1947,6 +1976,35 @@ function handleThrow(
   }
 }
 
+/**
+ * Lets a player join an in-progress match as a non-participating Watcher.
+ * They get the special Watcher spawn, are flagged dead+watching so they
+ * see all chat channels, and don't count toward win conditions.
+ */
+function handleJoinAsWatcher(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  // Already a player — skip; they're alive, not a watcher.
+  if (state.players[m.sender.userId]) return;
+  const spawn = tilemap.spawnsById.get('Watcher');
+  if (!spawn) return;
+  const watcher = newPlayerInGame(m.sender.userId, m.sender.username, spawn.x, spawn.y);
+  watcher.roleId = 'watcher';
+  watcher.isAlive = false;
+  watcher.isWatching = true;
+  watcher.hp = 0;
+  state.players[m.sender.userId] = watcher;
+  sendInitialSnapshot(dispatcher, state, m.sender);
+  sendInvFull(dispatcher, state, m.sender);
+  broadcastAnnouncement(dispatcher, {
+    kind: 'system',
+    message: `${watcher.username} joined as a Watcher.`,
+  });
+}
+
 function handleDoorCodeEntry(
   state: PyrceMatchState,
   m: nkruntime.MatchMessage,
@@ -2107,13 +2165,42 @@ function handleChat(
   tick: number,
   dispatcher: nkruntime.MatchDispatcher,
 ): void {
-  if (state.phase !== MatchPhase.InGame) return;
-  const sender = state.players[m.sender.userId];
-  if (!sender) return;
+  if (state.phase === MatchPhase.Ending) return;
+  const senderPresence = state.presences[m.sender.userId];
+  if (!senderPresence) return;
   const req = parseBody<C2SChat>(m.data);
   if (!req || !req.channel) return;
   const body = sanitizeChatBody(req.body);
   if (body.length === 0) return;
+
+  // Lobby chat: every presence hears it as OOC; no role gating, no
+  // proximity. Once InGame starts, normal routing applies.
+  if (state.phase === MatchPhase.Lobby) {
+    const recipients: nkruntime.Presence[] = [];
+    for (const uid in state.presences) {
+      const p = state.presences[uid];
+      if (p) recipients.push(p);
+    }
+    const lobbyPayload: S2CChatMessage = {
+      channel: ChatChannel.OOC,
+      fromUserId: m.sender.userId,
+      fromUsername: m.sender.username,
+      body,
+      bubble: false,
+      tickN: tick,
+    };
+    dispatcher.broadcastMessage(
+      OpCode.S2C_CHAT_MESSAGE,
+      JSON.stringify(lobbyPayload),
+      recipients,
+      null,
+      true,
+    );
+    return;
+  }
+
+  const sender = state.players[m.sender.userId];
+  if (!sender) return;
 
   const { recipients, bubble } = routeChat(state, sender, req.channel);
   if (recipients.length === 0) return;
@@ -2237,6 +2324,10 @@ function handleAttack(
           true,
         );
       }
+      broadcastAnnouncement(dispatcher, {
+        kind: 'mode_event',
+        message: `${attacker.username} snickers as butterflies emerge.`,
+      });
       state.scheduledButterfly = [];
     }
   }

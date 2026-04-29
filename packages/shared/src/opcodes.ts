@@ -59,6 +59,7 @@ export enum OpCode {
   C2S_SUICIDE = 1909,
   C2S_THROW = 1910,
   C2S_DOOR_CODE_ENTRY = 1911,
+  C2S_JOIN_AS_WATCHER = 1912,
 
   // ===== Server → Client =====
   S2C_HELLO = 2000,

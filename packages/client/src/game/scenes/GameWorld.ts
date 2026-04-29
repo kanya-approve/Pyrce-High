@@ -104,6 +104,7 @@ interface CorpseSprite {
 export class GameWorld extends Scene {
   private match!: NakamaMatchClient;
   private matchId!: string;
+  private offMatchData: (() => void) | null = null;
   private map = tilemapData as TilemapJson;
   private players = new Map<string, PlayerSprite>();
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -280,7 +281,7 @@ export class GameWorld extends Scene {
 
     // Persistent HUD overlay + chat overlay + lighting overlay.
     this.scene.launch('Hud', { inventory: () => this.inventory, game: () => this.gameInfo });
-    this.scene.launch('ChatOverlay');
+    if (!this.scene.isActive('ChatOverlay')) this.scene.launch('ChatOverlay');
     this.scene.launch('Lighting', {
       game: () => this.gameInfo,
       inventory: () => this.inventory,
@@ -326,7 +327,9 @@ export class GameWorld extends Scene {
       this.setTypingIndicator(ev.fromUserId, ev.active);
     });
 
-    this.match.onMatchData((msg) => this.handleMatchData(msg.op_code, msg.data));
+    this.offMatchData = this.match.onMatchData((msg) =>
+      this.handleMatchData(msg.op_code, msg.data),
+    );
 
     // Background music: pick the mode-themed track. Falls back to the
     // default if the mode-specific track isn't loaded.
@@ -349,7 +352,8 @@ export class GameWorld extends Scene {
 
   shutdown(): void {
     this.bgm?.stop();
-    this.match.onMatchData(() => {});
+    this.offMatchData?.();
+    this.offMatchData = null;
     this.game.events.off('chat:bubble');
     this.game.events.off('chat:typing');
     this.scene.stop('Hud');
@@ -680,34 +684,79 @@ export class GameWorld extends Scene {
     if (path.length === 0) return;
     const start = path[0];
     if (!start) return;
-    const fx = this.add
-      .image(start.x * TILE + TILE / 2, start.y * TILE + TILE / 2, ATLAS_KEY)
-      .setDepth(900);
     const atlasTex = this.textures.get(ATLAS_KEY);
-    const featherFrame = ITEM_SPRITES['black_feather'];
-    if (featherFrame && atlasTex.has(featherFrame)) fx.setFrame(featherFrame);
+    const headFrame = 'mh-icons/windanimation/head/S/0';
+    const bodyFrame = 'mh-icons/windanimation/body/S/0';
+    const tailFrame = 'mh-icons/windanimation/tail/S/0';
+    const haveDragon = atlasTex.has(headFrame) && atlasTex.has(bodyFrame);
+    // Build a dragon: head leading the path, body segments trailing one
+    // tile behind. Each tile, segments shift forward; the head fades on
+    // impact.
+    const tileCenter = (p: { x: number; y: number }) => ({
+      x: p.x * TILE + TILE / 2,
+      y: p.y * TILE + TILE / 2,
+    });
+    const head = this.add
+      .image(
+        tileCenter(start).x,
+        tileCenter(start).y,
+        ATLAS_KEY,
+        haveDragon ? headFrame : (ITEM_SPRITES['black_feather'] ?? 0),
+      )
+      .setDepth(900);
+    const body: Phaser.GameObjects.Image[] = [];
     let i = 1;
     const stepMs = 60;
-    const tickFn = () => {
+    const advance = () => {
       if (i >= path.length) {
-        fx.destroy();
+        // Tail boom
+        this.tweens.add({
+          targets: [head, ...body],
+          alpha: 0,
+          duration: 300,
+          onComplete: () => {
+            head.destroy();
+            for (const b of body) b.destroy();
+          },
+        });
         return;
       }
-      const p = path[i];
-      if (!p) {
-        fx.destroy();
+      const next = path[i];
+      if (!next) {
+        head.destroy();
+        for (const b of body) b.destroy();
         return;
+      }
+      const headPos = tileCenter(next);
+      // Push a body segment at the head's previous position.
+      if (haveDragon) {
+        const seg = this.add
+          .image(head.x, head.y, ATLAS_KEY, body.length === 0 ? bodyFrame : tailFrame)
+          .setDepth(900);
+        body.push(seg);
+        // Cap trail to 4 segments; fade the oldest.
+        if (body.length > 4) {
+          const old = body.shift();
+          if (old) {
+            this.tweens.add({
+              targets: old,
+              alpha: 0,
+              duration: 200,
+              onComplete: () => old.destroy(),
+            });
+          }
+        }
       }
       this.tweens.add({
-        targets: fx,
-        x: p.x * TILE + TILE / 2,
-        y: p.y * TILE + TILE / 2,
+        targets: head,
+        x: headPos.x,
+        y: headPos.y,
         duration: stepMs,
-        onComplete: tickFn,
+        onComplete: advance,
       });
       i++;
     };
-    tickFn();
+    advance();
   }
 
   /** Killer's prompt to allow/deny a corpse search of a body they made. */

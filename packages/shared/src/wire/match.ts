@@ -306,3 +306,5 @@ export interface S2CFxSwing {
   userId: string;
   facing: import('../content/tilemap.js').Facing;
 }
+
+export type C2SJoinAsWatcher = {};

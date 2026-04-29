@@ -36,6 +36,8 @@ export class Lobby extends Scene {
   >();
   private myVote: string | null = null;
   private tally: { [modeId: string]: number } = {};
+  private offMatchData: (() => void) | null = null;
+  private offPresence: (() => void) | null = null;
 
   constructor() {
     super('Lobby');
@@ -53,6 +55,9 @@ export class Lobby extends Scene {
   create(): void {
     this.match = this.game.registry.get('match') as NakamaMatchClient;
     const { width, height } = this.scale.gameSize;
+
+    // Lobby chat overlay so people can talk while waiting for the round.
+    if (!this.scene.isActive('ChatOverlay')) this.scene.launch('ChatOverlay');
 
     this.add
       .text(width / 2, 50, `Lobby: ${this.matchId.slice(0, 24)}…`, {
@@ -94,13 +99,13 @@ export class Lobby extends Scene {
       this.makeButton(width / 2 + 40, height - 90, 200, 40, 'Start Game', () => this.handleStart());
     }
 
-    this.match.onPresenceChange((ev) => {
+    this.offPresence = this.match.onPresenceChange((ev) => {
       for (const p of ev.joins ?? []) this.presences.set(p.user_id, p);
       for (const p of ev.leaves ?? []) this.presences.delete(p.user_id);
       this.renderPlayers();
     });
 
-    this.match.onMatchData((msg) => {
+    this.offMatchData = this.match.onMatchData((msg) => {
       if (msg.op_code === OpCode.S2C_PHASE_CHANGE) {
         const payload = parsePayload<S2CPhaseChange>(msg.data);
         if (payload && payload.phase === MatchPhase.InGame && payload.players) {
@@ -127,8 +132,11 @@ export class Lobby extends Scene {
   }
 
   shutdown(): void {
-    this.match.onPresenceChange(() => {});
-    this.match.onMatchData(() => {});
+    this.offPresence?.();
+    this.offMatchData?.();
+    this.offPresence = null;
+    this.offMatchData = null;
+    // Leave ChatOverlay running — GameWorld keeps it; LobbyBrowser stops it.
   }
 
   private amHost(): boolean {

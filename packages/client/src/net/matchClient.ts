@@ -87,17 +87,36 @@ export class NakamaMatchClient {
     await this.socket.sendMatchState(this.currentMatchId, op, data);
   }
 
-  onPresenceChange(cb: (ev: MatchPresenceEvent) => void): void {
-    this.socket.onmatchpresence = cb;
+  private matchDataListeners = new Set<(data: MatchData) => void>();
+  private presenceListeners = new Set<(ev: MatchPresenceEvent) => void>();
+  private socketListenersWired = false;
+
+  /** Register a listener; returns an unsubscribe function. */
+  onPresenceChange(cb: (ev: MatchPresenceEvent) => void): () => void {
+    this.wireSocketListeners();
+    this.presenceListeners.add(cb);
+    return () => this.presenceListeners.delete(cb);
   }
 
   /**
-   * Subscribe to incoming match data. The latest registered callback wins —
-   * scenes register on `create()` and the previous scene's callback is
-   * naturally replaced when the next scene mounts.
+   * Subscribe to incoming match data. Multiple scenes may subscribe — each
+   * gets every message. Returns an unsubscribe function.
    */
-  onMatchData(cb: (data: MatchData) => void): void {
-    this.socket.onmatchdata = cb;
+  onMatchData(cb: (data: MatchData) => void): () => void {
+    this.wireSocketListeners();
+    this.matchDataListeners.add(cb);
+    return () => this.matchDataListeners.delete(cb);
+  }
+
+  private wireSocketListeners(): void {
+    if (this.socketListenersWired) return;
+    this.socketListenersWired = true;
+    this.socket.onmatchdata = (data) => {
+      for (const cb of this.matchDataListeners) cb(data);
+    };
+    this.socket.onmatchpresence = (ev) => {
+      for (const cb of this.presenceListeners) cb(ev);
+    };
   }
 
   // ---------- Internals ----------

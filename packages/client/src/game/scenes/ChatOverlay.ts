@@ -24,6 +24,8 @@ const CHANNEL_PREFIXES: Record<string, ChatChannel> = {
   '/emote': ChatChannel.Emote,
   '/me': ChatChannel.Emote,
   '/dead': ChatChannel.Dead,
+  '/shini': ChatChannel.Shinigami,
+  '/ghost': ChatChannel.Ghost,
 };
 
 const CHANNEL_COLOURS: Partial<Record<ChatChannel, string>> = {
@@ -51,6 +53,7 @@ export class ChatOverlay extends Scene {
   private historyText!: Phaser.GameObjects.Text;
   private inputEl!: HTMLInputElement;
   private inputContainer!: HTMLDivElement;
+  private offMatchData: (() => void) | null = null;
 
   constructor() {
     super('ChatOverlay');
@@ -106,7 +109,7 @@ export class ChatOverlay extends Scene {
       });
     }
 
-    this.match.onMatchData((msg) => {
+    this.offMatchData = this.match.onMatchData((msg) => {
       if (msg.op_code === OpCode.S2C_CHAT_MESSAGE) {
         const m = parsePayload<S2CChatMessage>(msg.data);
         if (m) this.handleChatMessage(m);
@@ -118,7 +121,8 @@ export class ChatOverlay extends Scene {
   }
 
   shutdown(): void {
-    this.match.onMatchData(() => {});
+    this.offMatchData?.();
+    this.offMatchData = null;
     this.inputContainer?.remove();
   }
 
@@ -137,7 +141,7 @@ export class ChatOverlay extends Scene {
     const input = document.createElement('input');
     input.type = 'text';
     input.maxLength = 500;
-    input.placeholder = 'say… (/shout /whisper /ooc /emote /dead)';
+    input.placeholder = 'say… (/shout /whisper /ooc /emote /dead /ghost /shini /suicide)';
     input.style.width = '100%';
     input.style.boxSizing = 'border-box';
     input.style.padding = '6px 8px';
