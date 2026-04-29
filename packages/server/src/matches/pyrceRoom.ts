@@ -76,6 +76,7 @@ import {
   newClock,
   totalGameMinutes,
 } from '../mode.js';
+import { MODE_SCRIPTS } from '../modeScripts.js';
 import { type ContainerInstance, seedContainers } from '../world/containers.js';
 import { fromInstance } from '../world/groundItems.js';
 import { tilemap } from '../world/tilemap.js';
@@ -219,6 +220,16 @@ export function matchLoop(
   for (const m of messages) {
     handleMessage(state, m, tick, dispatcher, logger);
   }
+
+  // Mode-script per-tick scheduler drain (death-note kills, witch revives,
+  // zombie infections turning).
+  drainScheduledEffects(state, dispatcher, tick, logger);
+
+  // Mode-script onTick hook.
+  const modeScript = state.gameModeId
+    ? MODE_SCRIPTS[getMode(state.gameModeId)?.scriptId ?? '']
+    : undefined;
+  modeScript?.onTick?.(state, { tick, tickRate: TICK_RATE });
 
   if (state.pendingDoorCloses && state.pendingDoorCloses.length > 0) {
     const remaining: typeof state.pendingDoorCloses = [];
@@ -717,10 +728,34 @@ function handleInvUse(
       sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
       return;
     }
+    case 'death_note_write': {
+      // Forwarded to the active mode's script (death_note / death_note_classic).
+      // The C2S_INV_USE payload includes a `targetUserId` selected by the
+      // Kira UI; the script schedules the heart-attack timer.
+      if (player.roleId !== 'kira') {
+        sendError(dispatcher, m.sender, 'not_kira', 'only Kira can write the death note');
+        return;
+      }
+      const useReq = req as C2SInvUse & { targetUserId?: string };
+      const modeDef2 = state.gameModeId ? getMode(state.gameModeId) : undefined;
+      const script = modeDef2?.scriptId ? MODE_SCRIPTS[modeDef2.scriptId] : undefined;
+      if (!script?.onUse) {
+        sendError(dispatcher, m.sender, 'wrong_mode', 'death note only works in Death Note mode');
+        return;
+      }
+      script.onUse(
+        state,
+        player,
+        inst.instanceId,
+        { targetUserId: useReq.targetUserId },
+        { tick: state.tickN, tickRate: TICK_RATE },
+      );
+      sendInvDelta(dispatcher, state, m.sender, {});
+      return;
+    }
     // Stub: notify the user but don't crash. These need full mode support
-    // (death_note_write needs the Kira role, computer needs the student
-    // roster, etc.) — wired when modes ship.
-    case 'death_note_write':
+    // (computer needs the student roster, paper-airplane needs target picker,
+    // etc.) — wired when modes ship.
     case 'paper_write':
     case 'paper_airplane':
     case 'paper_view':
@@ -1180,12 +1215,28 @@ function handleAttack(
   const victimPresence = state.presences[victim.userId];
   if (victimPresence) sendPlayerHP(dispatcher, victimPresence, victim);
 
+  // Mode-script onAttack hook (vampire heal-on-hit, zombie infection).
+  const modeDef = state.gameModeId ? getMode(state.gameModeId) : undefined;
+  const modeScript = modeDef?.scriptId ? MODE_SCRIPTS[modeDef.scriptId] : undefined;
+  modeScript?.onAttack?.(state, attacker, victim, result.weaponName, {
+    tick,
+    tickRate: TICK_RATE,
+  });
+  // Reflect any HP change the script just made.
+  if (modeScript?.onAttack) {
+    broadcastPlayerHealth(dispatcher, attacker);
+    const ap = state.presences[attacker.userId];
+    if (ap) sendPlayerHP(dispatcher, ap, attacker);
+  }
+
   if (result.killed && result.corpse) {
     state.corpses[result.corpse.corpseId] = result.corpse;
     broadcastPlayerDied(dispatcher, victim, attacker.userId, result.weaponName);
     broadcastCorpseUpdate(dispatcher, result.corpse);
     broadcastFxSound(dispatcher, sfxForWeapon(result.weaponName), victim.x, victim.y, 0.9);
     broadcastFxSound(dispatcher, 'body_fall', victim.x, victim.y, 0.7);
+    // Mode-script onDeath hook (witch revive).
+    modeScript?.onDeath?.(state, victim, attacker.userId, { tick, tickRate: TICK_RATE });
     // Killer + corpse are both visible to anyone with line of sight; the
     // body-discovery flow will fire on someone else walking adjacent.
     logger.info(
@@ -1269,6 +1320,112 @@ const SPECIAL_SPAWN_BY_ROLE: Record<string, string> = {
 };
 
 /** Move role-restricted players to their named spawn points after assignment. */
+/** Drain Death Note kill / Witch revive / Zombie infection schedulers. */
+function drainScheduledEffects(
+  state: PyrceMatchState,
+  dispatcher: nkruntime.MatchDispatcher,
+  tick: number,
+  logger: nkruntime.Logger,
+): void {
+  // Death Note: kill victims whose heart-attack timer has elapsed.
+  if (state.scheduledDeaths && state.scheduledDeaths.length > 0) {
+    const remaining: typeof state.scheduledDeaths = [];
+    for (const s of state.scheduledDeaths) {
+      if (tick < s.atTick) {
+        remaining.push(s);
+        continue;
+      }
+      const victim = state.players[s.victimUserId];
+      if (!victim || !victim.isAlive) continue;
+      victim.hp = 0;
+      victim.isAlive = false;
+      victim.isWatching = true;
+      const corpse: Corpse = {
+        corpseId: newCorpseId(),
+        victimUserId: victim.userId,
+        victimUsername: victim.username,
+        victimRealName: victim.realName,
+        killerUserId: s.killerUserId,
+        cause: s.cause,
+        x: victim.x,
+        y: victim.y,
+        contents: victim.inventory.items.slice(),
+        discovered: false,
+        discoveredByUserId: null,
+      };
+      victim.inventory = {
+        items: [],
+        hotkeys: [null, null, null, null, null],
+        equipped: null,
+        weight: 0,
+        weightCap: victim.inventory.weightCap,
+      };
+      state.corpses[corpse.corpseId] = corpse;
+      broadcastPlayerDied(dispatcher, victim, s.killerUserId, s.cause);
+      broadcastCorpseUpdate(dispatcher, corpse);
+      broadcastFxSound(dispatcher, 'body_fall', victim.x, victim.y, 0.7);
+      logger.info('death-note kill: %s by %s', victim.userId, s.killerUserId);
+    }
+    state.scheduledDeaths = remaining;
+  }
+
+  // Witch: revive players whose timer has elapsed.
+  if (state.scheduledRevives && state.scheduledRevives.length > 0) {
+    const remaining: typeof state.scheduledRevives = [];
+    for (const s of state.scheduledRevives) {
+      if (tick < s.atTick) {
+        remaining.push(s);
+        continue;
+      }
+      const target = state.players[s.userId];
+      if (!target) continue;
+      const spawn = pickRandomSpawn();
+      target.hp = target.maxHp;
+      target.isAlive = true;
+      target.isWatching = false;
+      target.x = spawn.x;
+      target.y = spawn.y;
+      broadcastPlayerHealth(dispatcher, target);
+      broadcastPlayerMoved(dispatcher, target, tick);
+      broadcastAnnouncement(dispatcher, {
+        kind: 'mode_event',
+        message: `${target.username} stirs back to life…`,
+      });
+      logger.info('witch revive: %s', target.userId);
+    }
+    state.scheduledRevives = remaining;
+  }
+
+  // Zombie: turn infected players who've passed the timer.
+  if (state.scheduledInfections && state.scheduledInfections.length > 0) {
+    const remaining: typeof state.scheduledInfections = [];
+    for (const s of state.scheduledInfections) {
+      if (tick < s.atTick) {
+        remaining.push(s);
+        continue;
+      }
+      const target = state.players[s.userId];
+      if (!target || !target.isAlive) continue;
+      target.roleId = 'zombie';
+      broadcastAnnouncement(dispatcher, {
+        kind: 'mode_event',
+        message: `${target.username} has turned!`,
+      });
+      logger.info('zombie infect: %s turned', target.userId);
+    }
+    state.scheduledInfections = remaining;
+  }
+}
+
+function newCorpseId(): string {
+  return `corpse-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function pickRandomSpawn(): { x: number; y: number } {
+  const list = tilemap.playerSpawns;
+  return list[Math.floor(Math.random() * list.length)] ?? { x: 36, y: 66 };
+}
+
 function relocateSpecialSpawns(state: PyrceMatchState): void {
   for (const userId in state.players) {
     const p = state.players[userId];

@@ -42,6 +42,8 @@ export interface PlayerInGame {
   inventory: InventoryState;
   /** Assigned by the mode engine on Lobby→InGame. Default 'civilian'. */
   roleId: RoleId;
+  /** Per-role free-form storage: witch revives used, kira pending writes, … */
+  roleData?: Record<string, unknown>;
 }
 
 /**
@@ -115,6 +117,22 @@ export interface PyrceMatchState {
 
   /** In-round end-game votes: set of userIds who've voted yes. */
   endGameVotes?: { [userId: string]: true };
+
+  // ---------- mode-script scheduled effects ----------
+
+  /** Death Note: heart-attack timers. */
+  scheduledDeaths?: Array<{
+    victimUserId: string;
+    killerUserId: string | null;
+    cause: string;
+    atTick: number;
+  }>;
+
+  /** Witch: pending revive timers. */
+  scheduledRevives?: Array<{ userId: string; atTick: number }>;
+
+  /** Zombie: pending infection-turn timers. */
+  scheduledInfections?: Array<{ userId: string; atTick: number }>;
 }
 
 /** Build a fresh PlayerInGame, including a deep copy of the empty inventory. */
@@ -147,6 +165,7 @@ export function newPlayerInGame(
       weightCap: INITIAL_INVENTORY.weightCap,
     },
     roleId: 'civilian',
+    roleData: {},
   };
 }
 
