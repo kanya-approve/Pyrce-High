@@ -1083,15 +1083,34 @@ function handleViewProfile(
     sendError(dispatcher, m.sender, 'too_far', 'profile is out of range');
     return;
   }
-  const condition = describeCondition(target);
-  const payload: S2CProfileView = {
-    userId: target.userId,
-    username: target.username,
-    hp: target.hp,
-    maxHp: target.maxHp,
-    isAlive: target.isAlive,
-    condition,
-  };
+  // Doppelganger profile spoof: when target is a disguised doppel, return
+  // the victim's spoofed stats (Perfect / 100 HP / alive) under the
+  // victim's username. The viewer is themselves never spoofed — looking
+  // at yourself shows real stats.
+  const disguiseUsername = target.roleData?.['disguiseUsername'] as string | undefined;
+  const disguiseHp = target.roleData?.['disguiseProfileHp'] as number | undefined;
+  const disguiseMaxHp = target.roleData?.['disguiseProfileMaxHp'] as number | undefined;
+  const isSpoofed =
+    target.userId !== viewer.userId &&
+    target.roleId === 'doppelganger' &&
+    !!disguiseUsername;
+  const payload: S2CProfileView = isSpoofed
+    ? {
+        userId: target.userId,
+        username: disguiseUsername ?? target.username,
+        hp: disguiseHp ?? target.maxHp,
+        maxHp: disguiseMaxHp ?? target.maxHp,
+        isAlive: true,
+        condition: 'Perfect',
+      }
+    : {
+        userId: target.userId,
+        username: target.username,
+        hp: target.hp,
+        maxHp: target.maxHp,
+        isAlive: target.isAlive,
+        condition: describeCondition(target),
+      };
   dispatcher.broadcastMessage(
     OpCode.S2C_PROFILE_VIEW,
     JSON.stringify(payload),
@@ -1209,10 +1228,18 @@ function handleDoppelgangerCopy(
     sendError(dispatcher, m.sender, 'too_far', 'corpse not adjacent');
     return;
   }
+  // Snapshot a plausible "alive" profile for the victim so that anyone
+  // right-clicking the disguised doppel sees them as Perfect / 100 HP /
+  // alive — DM Doppelganger.dm Profile_Spoof. The corpse itself only
+  // carries the victim's name + role; we synthesise the rest.
+  const fakeMaxHp =
+    state.players[corpse.victimUserId]?.maxHp ?? player.maxHp;
   player.roleData = {
     ...(player.roleData ?? {}),
     disguiseAsUserId: corpse.victimUserId,
     disguiseUsername: corpse.victimUsername,
+    disguiseProfileHp: fakeMaxHp,
+    disguiseProfileMaxHp: fakeMaxHp,
   };
   broadcastPlayerMoved(dispatcher, player, tick, state);
 }
@@ -2189,14 +2216,18 @@ function broadcastPlayerMoved(
   const equippedInst = player.inventory.equipped
     ? player.inventory.items.find((i) => i.instanceId === player.inventory.equipped)
     : null;
+  // Doppelganger weapon-hide: a disguised doppel publishes a null
+  // equippedItemId so onlookers don't see a knife in their hand.
+  const isDisguisedDoppel =
+    player.roleId === 'doppelganger' && !!player.roleData?.['disguiseAsUserId'];
   const payload: S2CPlayerMoved = {
     userId: player.userId,
     x: player.x,
     y: player.y,
     facing: player.facing,
     tickN: tick,
-    equippedItemId: equippedInst?.itemId ?? null,
-    equippedItemBloody: equippedInst?.data?.['bloody'] === true,
+    equippedItemId: isDisguisedDoppel ? null : (equippedInst?.itemId ?? null),
+    equippedItemBloody: !isDisguisedDoppel && equippedInst?.data?.['bloody'] === true,
   };
   // Ghost-mode invisibility: when the moved player is a ghost, only the
   // ghost themselves, Whisperers, and the dead see the broadcast (per DM
