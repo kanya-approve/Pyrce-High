@@ -72,6 +72,13 @@ export interface GameModeDef {
   winConditions: WinCondition[];
   /** Optional named server script bundle (registry lookup in `server/src/modeScripts/`). */
   scriptId?: string;
+  /**
+   * Selectable in the lobby vote? Defaults to true. The DM source's
+   * `voting.dm` only registers vote-verbs for 8 modes + Extended fallback;
+   * the rest exist as code but were never wired to the poll, so they're
+   * excluded from the picker here too.
+   */
+  selectable?: boolean;
 }
 
 const NORMAL: GameModeDef = {
@@ -250,19 +257,29 @@ const DEATH_NOTE: GameModeDef = {
     { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'killer' },
   ],
   scriptId: 'death_note',
+  // DM voting.dm only registers `votedeathnote()` against the Classic
+  // variant — the new "Death Note" mode existed in code but was never
+  // hooked up to the poll. Match that here.
+  selectable: false,
 };
 
 const DEATH_NOTE_CLASSIC: GameModeDef = {
   id: 'death_note_classic',
   displayName: 'Death Note Classic',
-  description: 'Kira alone. No Shinigami helper, no Eyes. Pure paranoia.',
+  description: 'Kira alone (50% chance), with a Detective hunting them (1 in 5).',
   minPlayers: 4,
   setup: {
     roles: [
-      { roleId: 'kira', count: 1 },
+      // Per DM GameStarter.dm:732: `kirarand=rand(1,2); if(kirarand==1)goto nokira`
+      { roleId: 'kira', count: 1, probability: 0.5 },
+      // Per DM GameStarter.dm:716: `cc=rand(1,5); if(cc==1)` → 20% Detective.
+      { roleId: 'detective', count: 1, probability: 0.2 },
       { roleId: 'civilian', count: 'fillRemaining' },
     ],
-    items: [{ roleId: 'kira', itemId: 'death_note', equip: true, hotkey: 1 }],
+    items: [
+      { roleId: 'kira', itemId: 'death_note', equip: true, hotkey: 1 },
+      { roleId: 'detective', itemId: 'paper_sheet' },
+    ],
   },
   winConditions: [
     { type: 'roleEliminated', roleId: 'kira', winningAllegiance: 'town' },
@@ -290,6 +307,9 @@ const SLENDER: GameModeDef = {
     { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
   ],
   scriptId: 'slender',
+  // DM voting.dm has the `slndr` variable but never registers a vote verb
+  // for it — Slender existed as scaffolding only. Keep unselectable.
+  selectable: false,
 };
 
 export const MODES: Record<GameModeId, GameModeDef | undefined> = {
@@ -311,3 +331,13 @@ export function getMode(id: string): GameModeDef | undefined {
 }
 
 export const ALL_MODE_IDS: GameModeId[] = Object.keys(MODES) as GameModeId[];
+
+/** Modes the lobby vote should expose. Excludes selectable: false entries. */
+export function selectableModes(): GameModeDef[] {
+  const out: GameModeDef[] = [];
+  for (const id of ALL_MODE_IDS) {
+    const m = MODES[id];
+    if (m && m.selectable !== false) out.push(m);
+  }
+  return out;
+}

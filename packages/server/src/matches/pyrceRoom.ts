@@ -227,7 +227,7 @@ export function matchLoop(
 
   // Mode-script onTick hook.
   const modeScript = state.gameModeId
-    ? MODE_SCRIPTS[getMode(state.gameModeId)?.scriptId ?? '']
+    ? MODE_SCRIPTS[getMode(effectiveModeId(state))?.scriptId ?? '']
     : undefined;
   modeScript?.onTick?.(state, { tick, tickRate: TICK_RATE });
 
@@ -278,7 +278,7 @@ export function matchLoop(
       state.clock.lastBroadcastMinute = intMinute;
       broadcastClock(dispatcher, formatted);
     }
-    const modeDef = getMode(state.gameModeId ?? '');
+    const modeDef = getMode(effectiveModeId(state));
     if (modeDef) {
       const result = evaluateWinConditions(state, modeDef, gameMinutes);
       if (result) {
@@ -431,7 +431,25 @@ function handleStartGame(
   }
   // If host didn't specify, pick the lobby vote leader (ties broken by id).
   state.gameModeId = req.gameModeId ?? leadingMode(state) ?? 'normal';
-  const modeDef = getMode(state.gameModeId);
+  // Secret mode swaps in a random concrete mode under the hood per
+  // GameStarter.dm:255-258 — clients still see modeId 'secret' until
+  // end-game reveal.
+  delete state.secretActualModeId;
+  if (state.gameModeId === 'secret') {
+    const pool = [
+      'normal',
+      'witch',
+      'zombie',
+      'doppelganger',
+      'ghost',
+      'vampire',
+      'death_note_classic',
+      'extended',
+    ];
+    state.secretActualModeId = pool[Math.floor(Math.random() * pool.length)] ?? 'normal';
+    logger.info('secret mode resolved underlying mode=%s', state.secretActualModeId);
+  }
+  const modeDef = getMode(effectiveModeId(state));
   if (!modeDef) {
     sendError(dispatcher, m.sender, 'unknown_mode', `mode ${state.gameModeId} not registered`);
     return;
@@ -737,7 +755,7 @@ function handleInvUse(
         return;
       }
       const useReq = req as C2SInvUse & { targetUserId?: string };
-      const modeDef2 = state.gameModeId ? getMode(state.gameModeId) : undefined;
+      const modeDef2 = getMode(effectiveModeId(state));
       const script = modeDef2?.scriptId ? MODE_SCRIPTS[modeDef2.scriptId] : undefined;
       if (!script?.onUse) {
         sendError(dispatcher, m.sender, 'wrong_mode', 'death note only works in Death Note mode');
@@ -913,6 +931,11 @@ function broadcastModeTally(dispatcher: nkruntime.MatchDispatcher, state: PyrceM
   );
 }
 
+/** What mode is *actually* running this round (Secret mode unwraps to its pick). */
+function effectiveModeId(state: PyrceMatchState): string {
+  return state.secretActualModeId ?? state.gameModeId ?? '';
+}
+
 function leadingMode(state: PyrceMatchState): string | null {
   const tally: { [modeId: string]: number } = {};
   for (const userId in state.modeVotes ?? {}) {
@@ -962,7 +985,7 @@ function handleVoteEndGame(
   if (resolved) {
     state.ended = true;
     state.phase = MatchPhase.Ending;
-    const modeDef = getMode(state.gameModeId ?? '');
+    const modeDef = getMode(effectiveModeId(state));
     const reveals = buildReveals(state);
     const result: S2CGameResult = {
       modeId: modeDef?.id ?? 'normal',
@@ -1216,7 +1239,7 @@ function handleAttack(
   if (victimPresence) sendPlayerHP(dispatcher, victimPresence, victim);
 
   // Mode-script onAttack hook (vampire heal-on-hit, zombie infection).
-  const modeDef = state.gameModeId ? getMode(state.gameModeId) : undefined;
+  const modeDef = getMode(effectiveModeId(state));
   const modeScript = modeDef?.scriptId ? MODE_SCRIPTS[modeDef.scriptId] : undefined;
   modeScript?.onAttack?.(state, attacker, victim, result.weaponName, {
     tick,

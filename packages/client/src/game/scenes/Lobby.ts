@@ -5,6 +5,7 @@ import {
   OpCode,
   type S2CPhaseChange,
   type S2CVoteModeTally,
+  selectableModes,
 } from '@pyrce/shared';
 import { Scene } from 'phaser';
 import type { NakamaMatchClient } from '../../net/matchClient';
@@ -172,7 +173,7 @@ export class Lobby extends Scene {
 
   /** One button per registered mode. Click toggles your vote. */
   private buildModeVoteButtons(width: number): void {
-    const modes = Object.values(MODES).filter((m): m is NonNullable<typeof m> => m !== undefined);
+    const modes = selectableModes();
     const btnW = 180;
     const btnH = 28;
     const gap = 6;

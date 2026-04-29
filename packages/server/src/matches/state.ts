@@ -133,6 +133,13 @@ export interface PyrceMatchState {
 
   /** Zombie: pending infection-turn timers. */
   scheduledInfections?: Array<{ userId: string; atTick: number }>;
+
+  /**
+   * Secret mode: the actual mode whose rules are running underneath. Players
+   * see `gameModeId='secret'` and have to figure it out from gameplay. Only
+   * revealed in the end-game results.
+   */
+  secretActualModeId?: string;
 }
 
 /** Build a fresh PlayerInGame, including a deep copy of the empty inventory. */
