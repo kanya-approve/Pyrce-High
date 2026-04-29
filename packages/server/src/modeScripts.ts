@@ -16,6 +16,8 @@ export interface ScriptHookContext {
   tick: number;
   /** Tick rate in Hz (used to convert delays to ticks). */
   tickRate: number;
+  /** Tilemap helper for passability checks (vampire dash, etc.). */
+  isPassable?: (x: number, y: number) => boolean;
 }
 
 export interface ModeScript {
@@ -57,6 +59,18 @@ export interface ModeScript {
 
   /** Per-tick poll for delayed effects (kill timers, infection turn, …). */
   onTick?(state: PyrceMatchState, ctx: ScriptHookContext): void;
+
+  /**
+   * Role-triggered ability. Returns true on success (server reflects
+   * stamina + position to the user); false denies and lets the engine
+   * send a `not_ready` error.
+   */
+  onAbility?(
+    state: PyrceMatchState,
+    user: PlayerInGame,
+    ability: string,
+    ctx: ScriptHookContext,
+  ): boolean;
 }
 
 /**
@@ -123,30 +137,37 @@ const WITCH: ModeScript = {
       if (d <= WITCH_TOXIN_RADIUS) nearby++;
     }
     if (nearby >= WITCH_TOXIN_THRESHOLD) {
-      // Refund the damage; anti-magic toxin nullifies the witch's strike.
-      // (resolveAttack already reduced victim.hp; bring it back.)
-      victim.hp = Math.min(victim.maxHp, victim.hp + 1); // signal-only, leave hp clean
+      victim.hp = Math.min(victim.maxHp, victim.hp + 1);
     }
-    // The fx broadcast happens in the match handler since onAttack lacks
-    // access to the dispatcher. We mark a flag the handler can read.
     state.scheduledButterfly ??= [];
     state.scheduledButterfly.push({ x: attacker.x, y: attacker.y });
+  },
+  onAbility(state, user, ability, ctx) {
+    if (user.roleId !== 'witch') return false;
+    if (ability !== 'invisablewalk') return false;
+    if (user.stamina < 20) return false;
+    user.stamina = Math.max(0, user.stamina - 20);
+    user.roleData = {
+      ...(user.roleData ?? {}),
+      invisableUntilTick: ctx.tick + ctx.tickRate * 4,
+    };
+    return true;
   },
 };
 
 /**
- * Zombie: hits mark the victim infected. After a 12-second delay, the
- * infected civilian turns into a zombie (roleId='zombie') and joins the
- * killer faction.
+ * Zombie: hits from EITHER the main zombie or any minion mark the victim
+ * infected. After a 12-second delay the infected civilian turns into a
+ * minion zombie (roleId='minion_zombie') and joins the killer faction.
+ * The original 375-HP zombie keeps its role — only minions multiply.
  */
 const ZOMBIE_INFECTION_TURN_TICKS = 120; // ≈ 12s @ 10 Hz
 
 const ZOMBIE: ModeScript = {
   onAttack(state, attacker, victim, _weaponName, ctx) {
-    if (attacker.roleId !== 'zombie') return;
-    if (victim.roleId === 'zombie') return;
+    if (attacker.roleId !== 'zombie' && attacker.roleId !== 'minion_zombie') return;
+    if (victim.roleId === 'zombie' || victim.roleId === 'minion_zombie') return;
     state.scheduledInfections ??= [];
-    // De-dupe — multiple hits don't extend or reset the timer.
     if (state.scheduledInfections.some((s) => s.userId === victim.userId)) return;
     state.scheduledInfections.push({
       userId: victim.userId,
@@ -160,11 +181,47 @@ const ZOMBIE: ModeScript = {
  * The damage already happened in resolveAttack; we only top off HP here.
  */
 const VAMPIRE_HEAL_PER_HIT = 10;
+const VAMPIRE_DASH_RANGE = 4;
+const VAMPIRE_DASH_STAMINA_COST = 25;
 
 const VAMPIRE: ModeScript = {
   onAttack(_state, attacker, _victim, _weaponName, _ctx) {
     if (attacker.roleId !== 'vampire') return;
     attacker.hp = Math.min(attacker.maxHp, attacker.hp + VAMPIRE_HEAL_PER_HIT);
+  },
+  onAbility(state, user, ability, ctx) {
+    if (user.roleId !== 'vampire' && user.roleId !== 'nanaya') return false;
+    if (ability !== 'quickdash') return false;
+    if (user.stamina < VAMPIRE_DASH_STAMINA_COST) return false;
+    const isPassable = ctx.isPassable;
+    if (!isPassable) return false;
+    const dx = user.facing.includes('E') ? 1 : user.facing.includes('W') ? -1 : 0;
+    const dy = user.facing.includes('S') ? 1 : user.facing.includes('N') ? -1 : 0;
+    if (dx === 0 && dy === 0) return false;
+    let landingX = user.x;
+    let landingY = user.y;
+    for (let step = 1; step <= VAMPIRE_DASH_RANGE; step++) {
+      const tx = user.x + dx * step;
+      const ty = user.y + dy * step;
+      if (!isPassable(tx, ty)) break;
+      let occupied = false;
+      for (const uid in state.players) {
+        const o = state.players[uid];
+        if (!o || o === user || !o.isAlive) continue;
+        if (o.x === tx && o.y === ty) {
+          occupied = true;
+          break;
+        }
+      }
+      if (occupied) break;
+      landingX = tx;
+      landingY = ty;
+    }
+    if (landingX === user.x && landingY === user.y) return false;
+    user.stamina = Math.max(0, user.stamina - VAMPIRE_DASH_STAMINA_COST);
+    user.x = landingX;
+    user.y = landingY;
+    return true;
   },
 };
 

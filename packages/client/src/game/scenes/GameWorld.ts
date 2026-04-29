@@ -19,15 +19,19 @@ import {
   type S2CContainerContents,
   type S2CCorpseSpawn,
   type S2CCraftResult,
+  type S2CDoorCode,
   type S2CDoorState,
   type S2CFxButterfly,
   type S2CFxFeather,
   type S2CFxSmoke,
   type S2CFxSound,
   type S2CGameResult,
+  type S2CGhostSense,
   type S2CInitialSnapshot,
   type S2CInvDelta,
   type S2CInvFull,
+  type S2CPaperReceived,
+  type S2CPaperText,
   type S2CPlayerDied,
   type S2CPlayerHealth,
   type S2CPlayerHP,
@@ -117,6 +121,8 @@ export class GameWorld extends Scene {
     K: Phaser.Input.Keyboard.Key;
     B: Phaser.Input.Keyboard.Key;
     R: Phaser.Input.Keyboard.Key;
+    Q: Phaser.Input.Keyboard.Key;
+    P: Phaser.Input.Keyboard.Key;
     ONE: Phaser.Input.Keyboard.Key;
     TWO: Phaser.Input.Keyboard.Key;
     THREE: Phaser.Input.Keyboard.Key;
@@ -185,7 +191,7 @@ export class GameWorld extends Scene {
       ) as typeof this.cursors;
       this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D', false) as typeof this.wasdKeys;
       this.actionKeys = this.input.keyboard.addKeys(
-        'E,F,G,C,I,V,K,B,R,ONE,TWO,THREE,FOUR,FIVE',
+        'E,F,G,C,I,V,K,B,R,Q,P,ONE,TWO,THREE,FOUR,FIVE',
         false,
       ) as typeof this.actionKeys;
       const guard = (fn: () => void) => () => {
@@ -227,6 +233,14 @@ export class GameWorld extends Scene {
       this.actionKeys.R.on(
         'down',
         guard(() => this.handleVampireDrain()),
+      );
+      this.actionKeys.Q.on(
+        'down',
+        guard(() => this.handleRoleAbility()),
+      );
+      this.actionKeys.P.on(
+        'down',
+        guard(() => this.handlePullCorpse()),
       );
       this.actionKeys.ONE.on(
         'down',
@@ -556,6 +570,66 @@ export class GameWorld extends Scene {
     setTimeout(() => container.parentElement && container.remove(), 30000);
   }
 
+  /** Paper modal: read-only view, write input, or airplane target picker. */
+  private openPaperModal(p: S2CPaperText): void {
+    const parent = this.game.canvas.parentElement;
+    if (!parent) return;
+    const container = document.createElement('div');
+    container.style.cssText =
+      'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:340px;background:rgba(0,0,0,0.92);border:2px solid #88aaff;padding:14px;z-index:2300;color:#ffffff;font-family:Courier New,monospace;font-size:13px';
+    const header = document.createElement('div');
+    header.textContent = 'Paper sheet';
+    header.style.cssText = 'font-weight:bold;margin-bottom:8px;color:#ffd866';
+    container.appendChild(header);
+    const ta = document.createElement('textarea');
+    ta.value = p.text;
+    ta.style.cssText =
+      'width:300px;height:120px;background:#111;color:#ffffff;border:1px solid #88aaff;padding:6px;font-family:Courier New,monospace;font-size:12px';
+    ta.maxLength = 500;
+    container.appendChild(ta);
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-top:10px;display:flex;gap:6px;justify-content:flex-end';
+    const save = document.createElement('button');
+    save.textContent = 'Save';
+    save.style.cssText =
+      'padding:6px 14px;cursor:pointer;background:#225522;color:#aaffaa;border:1px solid #66aa66';
+    save.addEventListener('click', () => {
+      void this.match.sendMatch(OpCode.C2S_PAPER_WRITE, {
+        instanceId: p.instanceId,
+        text: ta.value,
+      });
+      container.remove();
+    });
+    const fly = document.createElement('button');
+    fly.textContent = 'Send as Airplane';
+    fly.style.cssText =
+      'padding:6px 14px;cursor:pointer;background:#224488;color:#aaccff;border:1px solid #6699dd';
+    fly.addEventListener('click', () => {
+      // Save first so airplane carries the latest text.
+      void this.match.sendMatch(OpCode.C2S_PAPER_WRITE, {
+        instanceId: p.instanceId,
+        text: ta.value,
+      });
+      container.remove();
+      this.openTargetPicker('Airplane recipient', (targetUserId) => {
+        void this.match.sendMatch(OpCode.C2S_PAPER_AIRPLANE, {
+          instanceId: p.instanceId,
+          targetUserId,
+        });
+      });
+    });
+    const close = document.createElement('button');
+    close.textContent = 'Close';
+    close.style.cssText =
+      'padding:6px 14px;cursor:pointer;background:#332222;color:#ffaaaa;border:1px solid #aa6666';
+    close.addEventListener('click', () => container.remove());
+    row.appendChild(save);
+    row.appendChild(fly);
+    row.appendChild(close);
+    container.appendChild(row);
+    parent.appendChild(container);
+  }
+
   /** Black Feather projectile: a sprite that traverses the path tile-by-tile. */
   playFeather(path: Array<{ x: number; y: number }>): void {
     if (path.length === 0) return;
@@ -645,6 +719,40 @@ export class GameWorld extends Scene {
         container.remove();
       }
     }, 12000);
+  }
+
+  /** Q: trigger the active mode's role ability (witch invisable, vampire dash). */
+  private handleRoleAbility(): void {
+    const role = this.gameInfo.role?.roleId;
+    let ability: 'invisablewalk' | 'quickdash' | null = null;
+    if (role === 'witch') ability = 'invisablewalk';
+    else if (role === 'vampire' || role === 'nanaya') ability = 'quickdash';
+    if (!ability) {
+      this.notifyHud('No ability for this role');
+      return;
+    }
+    void this.match.sendMatch(OpCode.C2S_ROLE_ABILITY, { ability });
+  }
+
+  /** P: pick up an adjacent corpse to drag, or drop the one you're carrying. */
+  private pullingCorpseId: string | null = null;
+  private handlePullCorpse(): void {
+    if (this.pullingCorpseId !== null) {
+      void this.match.sendMatch(OpCode.C2S_PULL_TOGGLE, { corpseId: null });
+      this.pullingCorpseId = null;
+      this.notifyHud('Dropped the body');
+      return;
+    }
+    const me = this.players.get(this.match.userId)?.state;
+    if (!me) return;
+    const target = this.nearestAdjacentCorpse(me.x, me.y);
+    if (!target) {
+      this.notifyHud('No corpse to drag');
+      return;
+    }
+    void this.match.sendMatch(OpCode.C2S_PULL_TOGGLE, { corpseId: target });
+    this.pullingCorpseId = target;
+    this.notifyHud('Dragging the body — P to drop');
   }
 
   private nearestAdjacentCorpse(x: number, y: number): string | null {
@@ -952,6 +1060,31 @@ export class GameWorld extends Scene {
         const f = parsePayload<S2CFxFeather>(data);
         if (!f) return;
         this.playFeather(f.path);
+        break;
+      }
+      case OpCode.S2C_GHOST_SENSE: {
+        const g = parsePayload<S2CGhostSense>(data);
+        if (!g) return;
+        if (g.direction === null) this.notifyHud('Whisperer: no ghost sensed');
+        else this.notifyHud(`Ghost is ${g.direction}, ~${g.distance} tiles away`);
+        break;
+      }
+      case OpCode.S2C_PAPER_TEXT: {
+        const p = parsePayload<S2CPaperText>(data);
+        if (!p) return;
+        this.openPaperModal(p);
+        break;
+      }
+      case OpCode.S2C_PAPER_RECEIVED: {
+        const p = parsePayload<S2CPaperReceived>(data);
+        if (!p) return;
+        this.notifyHud(`Paper from ${p.fromUsername}: "${p.text.slice(0, 80)}"`);
+        break;
+      }
+      case OpCode.S2C_DOOR_CODE: {
+        const c = parsePayload<S2CDoorCode>(data);
+        if (!c) return;
+        this.notifyHud(`Door code: ${c.code}`);
         break;
       }
       case OpCode.S2C_DOOR_STATE: {

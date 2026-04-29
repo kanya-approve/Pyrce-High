@@ -163,6 +163,12 @@ export interface PyrceMatchState {
     };
   };
 
+  /** Per-userId corpse-pull state: which corpse is each player dragging. */
+  pullingCorpse?: { [userId: string]: string };
+
+  /** Random 3-digit door code used by door_code_view items. */
+  doorCode?: string;
+
   /**
    * Secret mode: the actual mode whose rules are running underneath. Players
    * see `gameModeId='secret'` and have to figure it out from gameplay. Only

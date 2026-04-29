@@ -21,6 +21,10 @@ import {
   type C2SInvUse,
   type C2SLobbyStartGame,
   type C2SMoveIntent,
+  type C2SPaperAirplane,
+  type C2SPaperWrite,
+  type C2SPullToggle,
+  type C2SRoleAbility,
   type C2SSearchConsent,
   type C2SSearchCorpse,
   type C2STakeFromCorpse,
@@ -49,15 +53,19 @@ import {
   type S2CCorpseDespawn,
   type S2CCorpseSpawn,
   type S2CCraftResult,
+  type S2CDoorCode,
   type S2CDoorState,
   type S2CFxButterfly,
   type S2CFxFeather,
   type S2CFxSmoke,
   type S2CFxSound,
   type S2CGameResult,
+  type S2CGhostSense,
   type S2CInitialSnapshot,
   type S2CInvDelta,
   type S2CInvFull,
+  type S2CPaperReceived,
+  type S2CPaperText,
   type S2CPhaseChange,
   type S2CPlayerDied,
   type S2CPlayerHealth,
@@ -251,6 +259,45 @@ export function matchLoop(
 
   // Reap players whose presence has been gone too long.
   reapStaleDisconnects(state, dispatcher, tick, logger);
+
+  // Whisperer ghost-sense: periodic directional clue. Cheap; only fires
+  // every 20 ticks (~2s) to avoid spamming.
+  if (tick % 20 === 0) broadcastGhostSenseToWhisperers(state, dispatcher);
+
+  // Drop expired witch invisibility.
+  for (const uid in state.players) {
+    const p = state.players[uid];
+    const until = p?.roleData?.['invisableUntilTick'] as number | undefined;
+    if (p && until !== undefined && tick >= until) {
+      const next = { ...(p.roleData ?? {}) };
+      delete next['invisableUntilTick'];
+      p.roleData = next;
+      broadcastPlayerMoved(dispatcher, p, tick, state);
+    }
+  }
+
+  // Pull-corpse: any player dragging a corpse drags it to their old
+  // tile after they move (corpses follow on every move broadcast we've
+  // already fired — but cheap to reconcile here too).
+  if (state.pullingCorpse) {
+    for (const userId in state.pullingCorpse) {
+      const corpseId = state.pullingCorpse[userId];
+      if (!corpseId) continue;
+      const corpse = state.corpses[corpseId];
+      const dragger = state.players[userId];
+      if (!corpse || !dragger || !dragger.isAlive) {
+        delete state.pullingCorpse[userId];
+        continue;
+      }
+      const dist = Math.max(Math.abs(corpse.x - dragger.x), Math.abs(corpse.y - dragger.y));
+      if (dist > 1) {
+        // Snap corpse to within 1 tile (place behind the dragger's facing).
+        corpse.x = dragger.x;
+        corpse.y = dragger.y;
+        broadcastCorpseUpdate(dispatcher, corpse);
+      }
+    }
+  }
 
   // Mode-script onTick hook.
   const modeScript = state.gameModeId
@@ -511,6 +558,8 @@ function handleStartGame(
   state.phase = MatchPhase.InGame;
   state.modeVotes = {};
   state.endGameVotes = {};
+  // Random 3-digit code used by door_code_paper / door_code_view.
+  state.doorCode = `${Math.floor(100 + Math.random() * 900)}`;
   assignSpawns(state);
   state.containers = seedContainers();
   state.groundItems = {};
@@ -911,19 +960,84 @@ function handleInvUse(
       consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
       return;
     }
-    // Stub: notify the user but don't crash. These need full mode support
-    // (paper-airplane needs target picker, PDA needs full roster) — wired
-    // when modes ship.
-    case 'paper_write':
-    case 'paper_airplane':
-    case 'paper_view':
-    case 'pda':
+    case 'paper_view': {
+      const text = (inst.data?.['text'] as string | undefined) ?? '(blank)';
+      const payload: S2CPaperText = { instanceId: inst.instanceId, text };
+      dispatcher.broadcastMessage(
+        OpCode.S2C_PAPER_TEXT,
+        JSON.stringify(payload),
+        [m.sender],
+        null,
+        true,
+      );
+      sendInvDelta(dispatcher, state, m.sender, {});
+      return;
+    }
+    case 'paper_write': {
+      // Tells the client to open a write modal; the client then sends
+      // C2S_PAPER_WRITE { instanceId, text } to actually persist text.
+      const text = (inst.data?.['text'] as string | undefined) ?? '';
+      const payload: S2CPaperText = { instanceId: inst.instanceId, text };
+      dispatcher.broadcastMessage(
+        OpCode.S2C_PAPER_TEXT,
+        JSON.stringify(payload),
+        [m.sender],
+        null,
+        true,
+      );
+      sendInvDelta(dispatcher, state, m.sender, {});
+      return;
+    }
+    case 'paper_airplane': {
+      // The use-handler is the launch step; client sends C2S_PAPER_AIRPLANE
+      // with the target pick. Bounce a paper-text echo so the user sees
+      // what's currently written.
+      const text = (inst.data?.['text'] as string | undefined) ?? '';
+      const payload: S2CPaperText = { instanceId: inst.instanceId, text };
+      dispatcher.broadcastMessage(
+        OpCode.S2C_PAPER_TEXT,
+        JSON.stringify(payload),
+        [m.sender],
+        null,
+        true,
+      );
+      sendInvDelta(dispatcher, state, m.sender, {});
+      return;
+    }
+    case 'pda': {
+      // Roster of every alive player + their condition; same payload as the
+      // school computer but only revealed on PDA use (DM had a phone book).
+      const entries: S2CStudentRoster['entries'] = [];
+      for (const uid in state.players) {
+        const p = state.players[uid];
+        if (!p) continue;
+        entries.push({
+          userId: p.userId,
+          username: p.username,
+          isAlive: p.isAlive,
+          condition: describeCondition(p),
+        });
+      }
+      const payload: S2CStudentRoster = { entries };
+      dispatcher.broadcastMessage(
+        OpCode.S2C_STUDENT_ROSTER,
+        JSON.stringify(payload),
+        [m.sender],
+        null,
+        true,
+      );
+      sendInvDelta(dispatcher, state, m.sender, {});
+      return;
+    }
     case 'door_code_view': {
-      sendError(
-        dispatcher,
-        m.sender,
-        'not_yet_implemented',
-        `${def?.name ?? inst.itemId}: stub — landing with role/mode work`,
+      const code = state.doorCode ?? '???';
+      const payload: S2CDoorCode = { code };
+      dispatcher.broadcastMessage(
+        OpCode.S2C_DOOR_CODE,
+        JSON.stringify(payload),
+        [m.sender],
+        null,
+        true,
       );
       sendInvDelta(dispatcher, state, m.sender, {});
       return;
@@ -1962,6 +2076,63 @@ function reapStaleDisconnects(
   }
 }
 
+/**
+ * Whisperer directional sense: each whisperer gets a self-only S2C_GHOST_SENSE
+ * indicating where the ghost is roughly. Buckets distance to 5/15/30 and
+ * rounds direction to 8-way.
+ */
+function broadcastGhostSenseToWhisperers(
+  state: PyrceMatchState,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  let ghost: PlayerInGame | null = null;
+  for (const uid in state.players) {
+    const p = state.players[uid];
+    if (p?.roleId === 'ghost' && p.isAlive) {
+      ghost = p;
+      break;
+    }
+  }
+  for (const uid in state.players) {
+    const w = state.players[uid];
+    if (!w || w.roleId !== 'whisperer' || !w.isAlive) continue;
+    const presence = state.presences[uid];
+    if (!presence) continue;
+    let payload: S2CGhostSense;
+    if (!ghost) {
+      payload = { direction: null, distance: null };
+    } else {
+      const dx = ghost.x - w.x;
+      const dy = ghost.y - w.y;
+      const direction = bearing(dx, dy);
+      const cheb = Math.max(Math.abs(dx), Math.abs(dy));
+      const bucket = cheb <= 5 ? 5 : cheb <= 15 ? 15 : 30;
+      payload = { direction, distance: bucket };
+    }
+    dispatcher.broadcastMessage(
+      OpCode.S2C_GHOST_SENSE,
+      JSON.stringify(payload),
+      [presence],
+      null,
+      true,
+    );
+  }
+}
+
+function bearing(dx: number, dy: number): S2CGhostSense['direction'] {
+  if (dx === 0 && dy === 0) return null;
+  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+  // Map screen-coord angle (0=East, 90=South) to compass.
+  if (angle >= -22.5 && angle < 22.5) return 'E';
+  if (angle >= 22.5 && angle < 67.5) return 'SE';
+  if (angle >= 67.5 && angle < 112.5) return 'S';
+  if (angle >= 112.5 && angle < 157.5) return 'SW';
+  if (angle >= 157.5 || angle < -157.5) return 'W';
+  if (angle >= -157.5 && angle < -112.5) return 'NW';
+  if (angle >= -112.5 && angle < -67.5) return 'N';
+  return 'NE';
+}
+
 function newCorpseId(): string {
   return `corpse-${Math.random().toString(36).slice(2, 12)}`;
 }
@@ -2052,12 +2223,23 @@ function recipientsCanSee(state: PyrceMatchState, target: PlayerInGame): nkrunti
   return out;
 }
 
-/** True if `viewer` can perceive `target`. Ghost is hidden from civilians. */
+/** True if `viewer` can perceive `target`. Ghost + invisable witch hidden. */
 function canSee(viewer: PlayerInGame | null, target: PlayerInGame): boolean {
+  // Witch invisablewalk: timed invisibility; only the witch herself sees.
+  const invUntil = target.roleData?.['invisableUntilTick'] as number | undefined;
+  if (target.roleId === 'witch' && invUntil !== undefined) {
+    // Caller passes the current tick implicitly via global state — we
+    // can't easily access it here, but the engine clears the flag once
+    // expired. So while it's set, hide.
+    if (!viewer) return false;
+    if (viewer.userId === target.userId) return true;
+    if (!viewer.isAlive || viewer.isWatching) return true;
+    return false;
+  }
   if (target.roleId !== 'ghost') return true;
-  if (!viewer) return true; // unaffiliated presence (spectator) — show
+  if (!viewer) return true;
   if (viewer.userId === target.userId) return true;
-  if (!viewer.isAlive || viewer.isWatching) return true; // dead can see all
+  if (!viewer.isAlive || viewer.isWatching) return true;
   return viewer.roleId === 'ghost' || viewer.roleId === 'whisperer';
 }
 

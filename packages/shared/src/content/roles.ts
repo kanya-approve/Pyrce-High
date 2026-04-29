@@ -24,7 +24,8 @@ export type RoleId =
   | 'beatrice'
   | 'watcher'
   | 'escaped'
-  | 'slender';
+  | 'slender'
+  | 'minion_zombie';
 
 export type Allegiance = 'town' | 'killer' | 'neutral';
 
@@ -176,6 +177,14 @@ export const ROLES: Record<RoleId, RoleDef> = {
     baseHp: 200,
     baseStamina: 100,
     description: 'TODO',
+  },
+  minion_zombie: {
+    id: 'minion_zombie',
+    name: 'Zombie',
+    allegiance: 'killer',
+    baseHp: 100,
+    baseStamina: 80,
+    description: 'You succumbed to the bite. Spread the infection.',
   },
 };
 

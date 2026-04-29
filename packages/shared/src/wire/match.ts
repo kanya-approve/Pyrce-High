@@ -240,3 +240,48 @@ export interface S2CFxFeather {
   /** Tile path the feather travels along — start...impact. */
   path: Array<{ x: number; y: number }>;
 }
+
+// ----- role abilities -----
+
+export interface C2SRoleAbility {
+  /** Ability id understood by the active mode script. */
+  ability: 'invisablewalk' | 'quickdash';
+}
+
+export interface C2SPullToggle {
+  /** Set null to drop. Otherwise pick up an adjacent corpse. */
+  corpseId: string | null;
+}
+
+// ----- paper / pda / door-code -----
+
+export interface C2SPaperWrite {
+  instanceId: import('../ids.js').ItemInstanceId;
+  text: string;
+}
+export interface C2SPaperAirplane {
+  instanceId: import('../ids.js').ItemInstanceId;
+  targetUserId: string;
+}
+
+export interface S2CPaperText {
+  instanceId: import('../ids.js').ItemInstanceId;
+  text: string;
+}
+export interface S2CPaperReceived {
+  fromUsername: string;
+  text: string;
+}
+export interface S2CDoorCode {
+  /** Random 3-digit code generated for this match. */
+  code: string;
+}
+
+// ----- whisperer ghost-sense -----
+
+export interface S2CGhostSense {
+  /** Direction the ghost is from this whisperer (8-way), or null when not in range. */
+  direction: 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW' | null;
+  /** Approximate distance in tiles, rounded up to 5/15/30. */
+  distance: number | null;
+}

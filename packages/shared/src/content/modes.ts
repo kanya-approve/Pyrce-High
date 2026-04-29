@@ -137,7 +137,7 @@ const WITCH: GameModeDef = {
 const ZOMBIE: GameModeDef = {
   id: 'zombie',
   displayName: 'Zombie',
-  description: 'A 375-HP main zombie infects on contact. The infected eventually turn.',
+  description: 'A 375-HP main zombie infects on contact. The infected turn into minions.',
   minPlayers: 4,
   setup: {
     roles: [
@@ -147,6 +147,8 @@ const ZOMBIE: GameModeDef = {
     items: [],
   },
   winConditions: [
+    // The town wins when the original 375-HP zombie is gone — minions don't
+    // count toward keeping the killer faction alive (DM convention).
     { type: 'roleEliminated', roleId: 'zombie', winningAllegiance: 'town' },
     { type: 'lastFactionStanding' },
     { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
