@@ -62,6 +62,11 @@ export function objectIsSpawn(path: string): boolean {
   return path.startsWith('/obj/Spawns');
 }
 
+export function objectIsVending(path: string): boolean {
+  // /obj/Machines/vending1 (soda) or /obj/vending2 / vending3.
+  return /\/obj\/(?:Machines\/)?vending\d/i.test(path);
+}
+
 export function spawnIdOf(path: string): string | null {
   const m = /\/obj\/Spawns\/([A-Za-z0-9_]+)/.exec(path);
   return m?.[1] ? m[1] : null;

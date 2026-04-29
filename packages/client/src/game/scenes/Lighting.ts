@@ -1,4 +1,4 @@
-import { ITEMS, type S2CClockTick } from '@pyrce/shared';
+import { type Facing, ITEMS, type S2CClockTick, type TilemapJson } from '@pyrce/shared';
 import { Scene } from 'phaser';
 import type { ClientGameInfo } from '../../state/game';
 import type { ClientInventory } from '../../state/inventory';
@@ -10,9 +10,13 @@ const AMBIENT_AT_MIDNIGHT = 0.85;
 const AMBIENT_AT_DAWN = 0.0; // 6 AM
 /** Default light radius (in tiles) around the local player when nothing held. */
 const DEFAULT_VISION_RADIUS = 5;
+/** Flashlight cone half-angle in radians (~45° each side = 90° total). */
+const FLASHLIGHT_HALF_ANGLE = Math.PI / 4;
+/** Flashlight reach in tiles when held + on. */
+const FLASHLIGHT_RANGE = 8;
 
-/** Anything with x/y in world coords — Rectangle, Image, Sprite, … */
-type Positioned = { x: number; y: number };
+/** Anything with x/y in world + tile coords. */
+type Positioned = { x: number; y: number; tileX?: number; tileY?: number; facing?: Facing };
 
 interface RemoteSpriteRef {
   userId: string;
@@ -27,6 +31,8 @@ interface LightingData {
   remotes: () => RemoteSpriteRef[];
   worldWidthPx: number;
   worldHeightPx: number;
+  /** Tilemap for opacity raycasting (walls block light). */
+  tilemap: TilemapJson;
 }
 
 /**
@@ -40,6 +46,10 @@ export class Lighting extends Scene {
   private cfg!: LightingData;
   private overlay!: Phaser.GameObjects.RenderTexture;
   private brush!: Phaser.GameObjects.Graphics;
+  /** Pre-baked opacity grid: 1 = blocks light, 0 = transparent. */
+  private opacity!: Uint8Array;
+  private gridW = 0;
+  private gridH = 0;
 
   constructor() {
     super('Lighting');
@@ -47,6 +57,20 @@ export class Lighting extends Scene {
 
   init(data: LightingData): void {
     this.cfg = data;
+    const t = data.tilemap;
+    this.gridW = t.width;
+    this.gridH = t.height;
+    this.opacity = new Uint8Array(this.gridW * this.gridH);
+    for (let y = 0; y < t.height; y++) {
+      const row = t.grid[y] ?? [];
+      for (let x = 0; x < t.width; x++) {
+        const idx = row[x] ?? -1;
+        const tt = idx >= 0 ? t.tileTypes[idx] : undefined;
+        if (tt && (tt.category === 'wall' || tt.category === 'void')) {
+          this.opacity[y * this.gridW + x] = 1;
+        }
+      }
+    }
   }
 
   create(): void {
@@ -56,9 +80,6 @@ export class Lighting extends Scene {
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(900);
-
-    // Brush is a soft radial gradient drawn off-screen, then "stamped" with
-    // ERASE blend mode into the overlay each frame to cut light holes.
     this.brush = this.make.graphics({}, false);
   }
 
@@ -79,28 +100,168 @@ export class Lighting extends Scene {
     const offsetY = sceneCamera ? sceneCamera.scrollY : cam.scrollY;
 
     const inv = this.cfg.inventory();
-    const selfRadius = computeLightRadius(inv);
+    const radialRadius = computeLightRadius(inv);
+    const flashlightOn = inv.items.some(
+      (it) => it.itemId === 'flashlight' && it.data?.['on'] === true,
+    );
 
     const self = this.cfg.selfRect();
-    if (self) this.cutHole(self.x - offsetX, self.y - offsetY, selfRadius);
-
-    for (const r of this.cfg.remotes()) this.cutHole(r.rect.x - offsetX, r.rect.y - offsetY, 1.5);
+    if (self) {
+      this.cutLitTiles(self, radialRadius, offsetX, offsetY);
+      if (flashlightOn && self.facing) {
+        this.cutCone(self, FLASHLIGHT_RANGE, self.facing, offsetX, offsetY);
+      }
+    }
+    for (const r of this.cfg.remotes()) {
+      this.cutLitTiles(r.rect, 1.5, offsetX, offsetY);
+    }
   }
 
-  private cutHole(cx: number, cy: number, radiusTiles: number): void {
+  /**
+   * Cut every lit tile within the radius from `origin`, sampling line-of-
+   * sight against the opacity grid so walls block light. Falls back to a
+   * single soft circle when origin lacks tile coords.
+   */
+  private cutLitTiles(
+    origin: Positioned,
+    radiusTiles: number,
+    offsetX: number,
+    offsetY: number,
+  ): void {
+    if (origin.tileX === undefined || origin.tileY === undefined) {
+      this.cutSoftCircle(origin.x - offsetX, origin.y - offsetY, radiusTiles);
+      return;
+    }
+    const ox = origin.tileX;
+    const oy = origin.tileY;
+    const r = Math.ceil(radiusTiles);
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const tx = ox + dx;
+        const ty = oy + dy;
+        const dist = Math.max(Math.abs(dx), Math.abs(dy));
+        if (dist > radiusTiles) continue;
+        if (!this.lineOfSight(ox, oy, tx, ty)) continue;
+        // Soft fade with distance.
+        const alpha = 1 - dist / (radiusTiles + 1);
+        const cx = tx * TILE + TILE / 2 - offsetX;
+        const cy = ty * TILE + TILE / 2 - offsetY;
+        this.brush.clear();
+        this.brush.fillStyle(0xffffff, 0.35 * alpha + 0.4);
+        this.brush.fillRect(-TILE / 2, -TILE / 2, TILE, TILE);
+        this.overlay.erase(this.brush, cx, cy);
+      }
+    }
+  }
+
+  /** Bresenham line; returns false if any opaque tile sits between (excluding endpoints). */
+  private lineOfSight(x0: number, y0: number, x1: number, y1: number): boolean {
+    let x = x0;
+    let y = y0;
+    const dx = Math.abs(x1 - x0);
+    const dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+    let steps = 0;
+    while (true) {
+      if (x === x1 && y === y1) return true;
+      // Skip the origin tile; check intermediate tiles only.
+      if (steps > 0 && this.isOpaque(x, y)) return false;
+      const e2 = 2 * err;
+      if (e2 > -dy) {
+        err -= dy;
+        x += sx;
+      }
+      if (e2 < dx) {
+        err += dx;
+        y += sy;
+      }
+      steps++;
+      if (steps > 100) return false; // safety
+    }
+  }
+
+  private isOpaque(x: number, y: number): boolean {
+    if (x < 0 || y < 0 || x >= this.gridW || y >= this.gridH) return true;
+    return this.opacity[y * this.gridW + x] === 1;
+  }
+
+  /** Directional cone — flashlight. Sweeps a 90° wedge ahead of the player. */
+  private cutCone(
+    origin: Positioned,
+    rangeTiles: number,
+    facing: Facing,
+    offsetX: number,
+    offsetY: number,
+  ): void {
+    if (origin.tileX === undefined || origin.tileY === undefined) return;
+    const dirAngle = facingToRadians(facing);
+    const ox = origin.tileX;
+    const oy = origin.tileY;
+    const r = Math.ceil(rangeTiles);
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const dist = Math.max(Math.abs(dx), Math.abs(dy));
+        if (dist > rangeTiles) continue;
+        const angle = Math.atan2(dy, dx);
+        let diff = angle - dirAngle;
+        // Normalise to [-π, π].
+        while (diff > Math.PI) diff -= 2 * Math.PI;
+        while (diff < -Math.PI) diff += 2 * Math.PI;
+        if (Math.abs(diff) > FLASHLIGHT_HALF_ANGLE) continue;
+        const tx = ox + dx;
+        const ty = oy + dy;
+        if (!this.lineOfSight(ox, oy, tx, ty)) continue;
+        const alpha = 1 - dist / (rangeTiles + 1);
+        const cx = tx * TILE + TILE / 2 - offsetX;
+        const cy = ty * TILE + TILE / 2 - offsetY;
+        this.brush.clear();
+        this.brush.fillStyle(0xffffff, 0.45 * alpha + 0.4);
+        this.brush.fillRect(-TILE / 2, -TILE / 2, TILE, TILE);
+        this.overlay.erase(this.brush, cx, cy);
+      }
+    }
+  }
+
+  /** Fallback soft-circle cut for callers without tile coords (smoke fx etc). */
+  private cutSoftCircle(cx: number, cy: number, radiusTiles: number): void {
     const outer = radiusTiles * TILE;
     const inner = Math.max(2, outer * 0.55);
     this.brush.clear();
-    // Stack a few translucent circles to fake a smooth gradient — Graphics
-    // doesn't expose radial gradients in Phaser 4 yet.
     for (let i = 6; i >= 0; i--) {
       const t = i / 6;
-      const r = inner + (outer - inner) * t;
+      const rr = inner + (outer - inner) * t;
       const alpha = 0.18 * (1 - t) + 0.05;
       this.brush.fillStyle(0xffffff, alpha);
-      this.brush.fillCircle(0, 0, r);
+      this.brush.fillCircle(0, 0, rr);
     }
     this.overlay.erase(this.brush, cx, cy);
+  }
+}
+
+function facingToRadians(f: Facing): number {
+  // Screen coords: x → right, y → down. atan2(dy, dx).
+  switch (f) {
+    case 'E':
+      return 0;
+    case 'SE':
+      return Math.PI / 4;
+    case 'S':
+      return Math.PI / 2;
+    case 'SW':
+      return (3 * Math.PI) / 4;
+    case 'W':
+      return Math.PI;
+    case 'NW':
+      return -(3 * Math.PI) / 4;
+    case 'N':
+      return -Math.PI / 2;
+    case 'NE':
+      return -Math.PI / 4;
+    default:
+      return Math.PI / 2;
   }
 }
 

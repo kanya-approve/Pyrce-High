@@ -44,6 +44,12 @@ export interface PlayerInGame {
   roleId: RoleId;
   /** Per-role free-form storage: witch revives used, kira pending writes, … */
   roleData?: Record<string, unknown>;
+  /**
+   * Tick when this player's presence dropped (matchLeave during InGame).
+   * Cleared when they rejoin. Drained in matchLoop — players still gone
+   * after RECONNECT_GRACE_TICKS get killed off so the round can resolve.
+   */
+  disconnectedAtTick?: number;
 }
 
 /**
@@ -118,6 +124,12 @@ export interface PyrceMatchState {
   /** In-round end-game votes: set of userIds who've voted yes. */
   endGameVotes?: { [userId: string]: true };
 
+  /**
+   * Vote-kick: `kickVotes[targetUserId][voterUserId] = true`. When >50% of
+   * alive players vote against a target, the server kills them off.
+   */
+  kickVotes?: { [targetUserId: string]: { [voterUserId: string]: true } };
+
   // ---------- mode-script scheduled effects ----------
 
   /** Death Note: heart-attack timers. */
@@ -182,6 +194,8 @@ export function newPlayerInGame(
 export const TICK_RATE = 10; // Hz
 export const MAX_PLAYERS = 22;
 export const EMPTY_GRACE_TICKS = TICK_RATE * 30; // dispose after 30s of emptiness
+/** A mid-round disconnect kills the player after this many ticks. */
+export const RECONNECT_GRACE_TICKS = TICK_RATE * 60;
 
 /**
  * Move cooldown in ticks. At 10Hz, 1 tick = 100ms. We allow 1 tile-step

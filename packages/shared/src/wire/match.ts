@@ -169,3 +169,24 @@ export interface C2SDoppelgangerCopy {
   /** Adjacent corpse to copy. */
   corpseId: string;
 }
+
+export interface C2SVoteKick {
+  /** Target userId; pass empty string to withdraw your kick votes. */
+  targetUserId: string;
+}
+
+export interface S2CVoteKickTally {
+  /** Target userId being voted on (null if no active kick vote). */
+  targetUserId: string;
+  /** Username of the target for client display. */
+  targetUsername: string;
+  yes: number;
+  alive: number;
+  resolved: boolean;
+}
+
+export interface C2SVendingBuy {
+  /** Vending machine tile to buy from. */
+  x: number;
+  y: number;
+}

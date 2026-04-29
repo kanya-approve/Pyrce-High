@@ -23,8 +23,10 @@ import {
   type C2SMoveIntent,
   type C2SSearchCorpse,
   type C2STakeFromCorpse,
+  type C2SVendingBuy,
   type C2SViewProfile,
   type C2SVoteEndGame,
+  type C2SVoteKick,
   type C2SVoteMode,
   DIRECTION_DELTAS,
   type Facing,
@@ -61,6 +63,7 @@ import {
   type S2CProfileView,
   type S2CRoleAssigned,
   type S2CVoteEndGameTally,
+  type S2CVoteKickTally,
   type S2CVoteModeTally,
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
@@ -92,6 +95,7 @@ import {
   newPlayerInGame,
   type PlayerInGame,
   type PyrceMatchState,
+  RECONNECT_GRACE_TICKS,
   TICK_RATE,
   toPublicPlayerInGame,
 } from './state.js';
@@ -170,6 +174,11 @@ export function matchJoin(
 ): { state: PyrceMatchState } {
   for (const p of presences) {
     state.presences[p.userId] = p;
+    // Re-joining player: clear the disconnect timer so they're safe again.
+    const player = state.players[p.userId];
+    if (player?.disconnectedAtTick !== undefined) {
+      delete player.disconnectedAtTick;
+    }
     logger.info('match join: user=%s session=%s phase=%s', p.userId, p.sessionId, state.phase);
 
     if (state.phase === MatchPhase.InGame) {
@@ -188,7 +197,7 @@ export function matchLeave(
   logger: nkruntime.Logger,
   _nk: nkruntime.Nakama,
   dispatcher: nkruntime.MatchDispatcher,
-  _tick: number,
+  tick: number,
   state: PyrceMatchState,
   presences: nkruntime.Presence[],
 ): { state: PyrceMatchState } {
@@ -196,6 +205,11 @@ export function matchLeave(
     delete state.presences[p.userId];
     if (state.phase === MatchPhase.Lobby) {
       delete state.players[p.userId];
+    } else if (state.phase === MatchPhase.InGame) {
+      // Stamp the disconnect tick. matchLoop kills the player if they're
+      // still gone after RECONNECT_GRACE_TICKS so the round can resolve.
+      const player = state.players[p.userId];
+      if (player && player.isAlive) player.disconnectedAtTick = tick;
     }
     logger.info('match leave (phase=%s): user=%s', state.phase, p.userId);
   }
@@ -226,6 +240,9 @@ export function matchLoop(
   // Mode-script per-tick scheduler drain (death-note kills, witch revives,
   // zombie infections turning).
   drainScheduledEffects(state, dispatcher, tick, logger);
+
+  // Reap players whose presence has been gone too long.
+  reapStaleDisconnects(state, dispatcher, tick, logger);
 
   // Mode-script onTick hook.
   const modeScript = state.gameModeId
@@ -382,11 +399,17 @@ function handleMessage(
     case OpCode.C2S_DOOR_TOGGLE:
       handleDoorToggle(state, m, dispatcher);
       break;
+    case OpCode.C2S_VENDING_BUY:
+      handleVendingBuy(state, m, dispatcher);
+      break;
     case OpCode.C2S_VOTE_MODE:
       handleVoteMode(state, m, dispatcher);
       break;
     case OpCode.C2S_VOTE_END_GAME:
       handleVoteEndGame(state, m, dispatcher, logger);
+      break;
+    case OpCode.C2S_VOTE_KICK:
+      handleVoteKick(state, m, tick, dispatcher, logger);
       break;
     case OpCode.C2S_VIEW_PROFILE:
       handleViewProfile(state, m, dispatcher);
@@ -975,6 +998,102 @@ function effectiveModeId(state: PyrceMatchState): string {
   return state.secretActualModeId ?? state.gameModeId ?? '';
 }
 
+function handleVoteKick(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  tick: number,
+  dispatcher: nkruntime.MatchDispatcher,
+  logger: nkruntime.Logger,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const voter = state.players[m.sender.userId];
+  if (!voter || !voter.isAlive) return;
+  const req = parseBody<C2SVoteKick>(m.data);
+  if (!req) return;
+  state.kickVotes ??= {};
+  // Withdraw any prior kick vote this voter has cast.
+  for (const t in state.kickVotes) {
+    delete state.kickVotes[t]?.[m.sender.userId];
+    if (state.kickVotes[t] && Object.keys(state.kickVotes[t]).length === 0) {
+      delete state.kickVotes[t];
+    }
+  }
+  if (req.targetUserId && state.players[req.targetUserId]) {
+    if (!state.kickVotes[req.targetUserId]) state.kickVotes[req.targetUserId] = {};
+    const bucket = state.kickVotes[req.targetUserId];
+    if (bucket) bucket[m.sender.userId] = true;
+  }
+  // Compute alive denominator.
+  let alive = 0;
+  for (const uid in state.players) if (state.players[uid]?.isAlive) alive++;
+  // Broadcast a tally for whichever target this voter is now backing
+  // (or all active targets if you withdrew from one and didn't pick another).
+  const activeTargets = req.targetUserId ? [req.targetUserId] : Object.keys(state.kickVotes);
+  for (const target of activeTargets) {
+    const votes = state.kickVotes[target];
+    if (!votes) continue;
+    const yes = Object.keys(votes).length;
+    const resolved = alive > 0 && yes * 2 > alive;
+    const targetPlayer = state.players[target];
+    const payload: S2CVoteKickTally = {
+      targetUserId: target,
+      targetUsername: targetPlayer?.username ?? '?',
+      yes,
+      alive,
+      resolved,
+    };
+    dispatcher.broadcastMessage(
+      OpCode.S2C_VOTE_KICK_TALLY,
+      JSON.stringify(payload),
+      null,
+      null,
+      true,
+    );
+    if (resolved && targetPlayer && targetPlayer.isAlive) {
+      // Force-kill via the same path as the disconnect reaper.
+      targetPlayer.hp = 0;
+      targetPlayer.isAlive = false;
+      targetPlayer.isWatching = true;
+      const corpse: Corpse = {
+        corpseId: newCorpseId(),
+        victimUserId: targetPlayer.userId,
+        victimUsername: targetPlayer.username,
+        victimRealName: targetPlayer.realName,
+        killerUserId: null,
+        cause: 'Vote-Kicked',
+        x: targetPlayer.x,
+        y: targetPlayer.y,
+        contents: targetPlayer.inventory.items.slice(),
+        discovered: false,
+        discoveredByUserId: null,
+      };
+      targetPlayer.inventory = {
+        items: [],
+        hotkeys: [null, null, null, null, null],
+        equipped: null,
+        weight: 0,
+        weightCap: targetPlayer.inventory.weightCap,
+      };
+      state.corpses[corpse.corpseId] = corpse;
+      broadcastPlayerDied(dispatcher, targetPlayer, null, 'Vote-Kicked');
+      broadcastCorpseUpdate(dispatcher, corpse);
+      broadcastAnnouncement(dispatcher, {
+        kind: 'system',
+        message: `${targetPlayer.username} was vote-kicked from the round.`,
+      });
+      delete state.kickVotes[target];
+      logger.info('vote-kick: %s removed (%d/%d voted)', target, yes, alive);
+      // Also drop their presence so they leave the match.
+      const pres = state.presences[target];
+      if (pres) {
+        dispatcher.matchKick([pres]);
+      }
+      // Touched a different player; refresh their visual state.
+      broadcastPlayerMoved(dispatcher, targetPlayer, tick, state);
+    }
+  }
+}
+
 function leadingMode(state: PyrceMatchState): string | null {
   const tally: { [modeId: string]: number } = {};
   for (const userId in state.modeVotes ?? {}) {
@@ -1037,6 +1156,72 @@ function handleVoteEndGame(
     refreshLabel(dispatcher, state);
     logger.info('round end via end-game vote (%d/%d alive voted yes)', yes, alive);
   }
+}
+
+/**
+ * Vending machine: spend 100 yen for one soda. DM `turf.dm:78-94` —
+ * vending1.dmi soda machine. The other vending sprites (vending2, vending3)
+ * exist as placeable cosmetics in DM and are accepted here as a no-op.
+ */
+const VENDING_COST_YEN = 100;
+
+function handleVendingBuy(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SVendingBuy>(m.data);
+  if (!req) return;
+  // Adjacent check.
+  if (Math.max(Math.abs(player.x - req.x), Math.abs(player.y - req.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'vending machine not adjacent');
+    return;
+  }
+  // Confirm there's an actual vending machine on that tile.
+  const machine = (tilemap.raw.vendings ?? []).find((v) => v.x === req.x && v.y === req.y);
+  if (!machine) {
+    sendError(dispatcher, m.sender, 'no_vending', 'no vending machine here');
+    return;
+  }
+  // Soda machine only; other vendings are cosmetic.
+  if (!/vending1/i.test(machine.kind)) {
+    sendError(dispatcher, m.sender, 'out_of_stock', 'this machine is empty');
+    return;
+  }
+  // Find a yen stack with at least 100.
+  const yen = player.inventory.items.find(
+    (it) => it.itemId === 'yen' && it.count >= VENDING_COST_YEN,
+  );
+  if (!yen) {
+    sendError(dispatcher, m.sender, 'no_yen', `you need ${VENDING_COST_YEN} yen`);
+    return;
+  }
+  // Deduct yen (whole-array replacement for Goja proxy correctness).
+  const updatedYen = { ...yen, count: yen.count - VENDING_COST_YEN };
+  let inv: typeof player.inventory = {
+    ...player.inventory,
+    items: player.inventory.items.map((it) => (it.instanceId === yen.instanceId ? updatedYen : it)),
+  };
+  // Remove the stack entirely if it hit zero.
+  if (updatedYen.count <= 0) {
+    inv = {
+      ...inv,
+      items: inv.items.filter((it) => it.instanceId !== yen.instanceId),
+      hotkeys: inv.hotkeys.map((slot) =>
+        slot === yen.instanceId ? null : slot,
+      ) as typeof inv.hotkeys,
+      equipped: inv.equipped === yen.instanceId ? null : inv.equipped,
+    };
+  }
+  player.inventory = inv;
+  // Grant the soda.
+  const r = addItem(player.inventory, 'soda', 1);
+  if (r) player.inventory = r.inventory;
+  sendInvFull(dispatcher, state, m.sender);
+  broadcastFxSound(dispatcher, 'page_turn_1', req.x, req.y, 0.5);
 }
 
 function handleDoorToggle(
@@ -1490,6 +1675,59 @@ function drainScheduledEffects(
       logger.info('zombie infect: %s turned', target.userId);
     }
     state.scheduledInfections = remaining;
+  }
+}
+
+/**
+ * Force-kill players who've been disconnected longer than the reconnect
+ * grace window. Drops a corpse like any other death so the round can
+ * resolve via win conditions.
+ */
+function reapStaleDisconnects(
+  state: PyrceMatchState,
+  dispatcher: nkruntime.MatchDispatcher,
+  tick: number,
+  logger: nkruntime.Logger,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  for (const userId in state.players) {
+    const p = state.players[userId];
+    if (!p || !p.isAlive) continue;
+    const at = p.disconnectedAtTick;
+    if (at === undefined) continue;
+    if (tick - at < RECONNECT_GRACE_TICKS) continue;
+    p.hp = 0;
+    p.isAlive = false;
+    p.isWatching = true;
+    delete p.disconnectedAtTick;
+    const corpse: Corpse = {
+      corpseId: newCorpseId(),
+      victimUserId: p.userId,
+      victimUsername: p.username,
+      victimRealName: p.realName,
+      killerUserId: null,
+      cause: 'Disconnect',
+      x: p.x,
+      y: p.y,
+      contents: p.inventory.items.slice(),
+      discovered: false,
+      discoveredByUserId: null,
+    };
+    p.inventory = {
+      items: [],
+      hotkeys: [null, null, null, null, null],
+      equipped: null,
+      weight: 0,
+      weightCap: p.inventory.weightCap,
+    };
+    state.corpses[corpse.corpseId] = corpse;
+    broadcastPlayerDied(dispatcher, p, null, 'Disconnect');
+    broadcastCorpseUpdate(dispatcher, corpse);
+    broadcastAnnouncement(dispatcher, {
+      kind: 'system',
+      message: `${p.username} disconnected and was lost to the round.`,
+    });
+    logger.info('disconnect kill: %s after %d ticks', p.userId, tick - at);
   }
 }
 

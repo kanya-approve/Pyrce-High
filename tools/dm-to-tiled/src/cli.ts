@@ -16,6 +16,7 @@ import {
   objectIsContainer,
   objectIsDoor,
   objectIsSpawn,
+  objectIsVending,
   spawnIdOf,
   type TurfCategory,
 } from './passability.js';
@@ -43,6 +44,12 @@ interface ContainerPoint {
   y: number;
 }
 
+interface VendingPoint {
+  kind: string;
+  x: number;
+  y: number;
+}
+
 interface TilemapJson {
   schemaVersion: 1;
   source: string;
@@ -55,6 +62,7 @@ interface TilemapJson {
   spawns: SpawnPoint[];
   doors: DoorPoint[];
   containers: ContainerPoint[];
+  vendings: VendingPoint[];
 }
 
 function main(): void {
@@ -103,6 +111,7 @@ function main(): void {
   const spawns: SpawnPoint[] = [];
   const doors: DoorPoint[] = [];
   const containers: ContainerPoint[] = [];
+  const vendings: VendingPoint[] = [];
 
   for (let y = 0; y < block.height; y++) {
     const row = block.rows[y] ?? [];
@@ -125,6 +134,8 @@ function main(): void {
           doors.push({ kind: obj, x, y });
         } else if (objectIsContainer(obj)) {
           containers.push({ kind: obj, x, y });
+        } else if (objectIsVending(obj)) {
+          vendings.push({ kind: obj, x, y });
         }
       }
     }
@@ -142,6 +153,7 @@ function main(): void {
     spawns,
     doors,
     containers,
+    vendings,
   };
 
   // Sanity: the spawns we expect (One..Twentytwo + Watcher + ShiniSpawn).

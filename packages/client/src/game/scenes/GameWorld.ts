@@ -246,13 +246,33 @@ export class GameWorld extends Scene {
     this.scene.launch('Lighting', {
       game: () => this.gameInfo,
       inventory: () => this.inventory,
-      selfRect: () => this.players.get(this.match.userId)?.rect ?? null,
+      selfRect: () => {
+        const me = this.players.get(this.match.userId);
+        if (!me) return null;
+        return {
+          x: me.rect.x,
+          y: me.rect.y,
+          tileX: me.state.x,
+          tileY: me.state.y,
+          facing: me.state.facing,
+        };
+      },
       remotes: () =>
         Array.from(this.players.values())
           .filter((s) => s.userId !== this.match.userId && s.state.isAlive)
-          .map((s) => ({ userId: s.userId, rect: s.rect })),
+          .map((s) => ({
+            userId: s.userId,
+            rect: {
+              x: s.rect.x,
+              y: s.rect.y,
+              tileX: s.state.x,
+              tileY: s.state.y,
+              facing: s.state.facing,
+            },
+          })),
       worldWidthPx: this.map.width * TILE,
       worldHeightPx: this.map.height * TILE,
+      tilemap: this.map,
     });
 
     // Chat bubbles fired by the ChatOverlay scene.
@@ -387,6 +407,17 @@ export class GameWorld extends Scene {
     }
     if (bestDoor) {
       void this.match.sendMatch(OpCode.C2S_DOOR_TOGGLE, { x: bestDoor.x, y: bestDoor.y });
+      return;
+    }
+    // Vending machine within range — buy a soda.
+    let bestVend: { x: number; y: number; dist: number } | null = null;
+    for (const v of this.map.vendings ?? []) {
+      const dist = Math.max(Math.abs(v.x - me.x), Math.abs(v.y - me.y));
+      if (dist > 1) continue;
+      if (!bestVend || dist < bestVend.dist) bestVend = { x: v.x, y: v.y, dist };
+    }
+    if (bestVend) {
+      void this.match.sendMatch(OpCode.C2S_VENDING_BUY, { x: bestVend.x, y: bestVend.y });
       return;
     }
     // Otherwise: open the nearest container within Chebyshev 1.

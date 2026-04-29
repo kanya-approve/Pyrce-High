@@ -34,6 +34,12 @@ export interface ContainerPoint {
   y: number;
 }
 
+export interface VendingPoint {
+  kind: string;
+  x: number;
+  y: number;
+}
+
 export interface TilemapJson {
   schemaVersion: 1;
   source: string;
@@ -46,6 +52,8 @@ export interface TilemapJson {
   spawns: SpawnPoint[];
   doors: DoorPoint[];
   containers: ContainerPoint[];
+  /** Vending machines: spend yen for a soda. */
+  vendings?: VendingPoint[];
 }
 
 /** Stable IDs for the seven directions we care about. */
