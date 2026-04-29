@@ -1091,9 +1091,7 @@ function handleViewProfile(
   const disguiseHp = target.roleData?.['disguiseProfileHp'] as number | undefined;
   const disguiseMaxHp = target.roleData?.['disguiseProfileMaxHp'] as number | undefined;
   const isSpoofed =
-    target.userId !== viewer.userId &&
-    target.roleId === 'doppelganger' &&
-    !!disguiseUsername;
+    target.userId !== viewer.userId && target.roleId === 'doppelganger' && !!disguiseUsername;
   const payload: S2CProfileView = isSpoofed
     ? {
         userId: target.userId,
@@ -1232,8 +1230,7 @@ function handleDoppelgangerCopy(
   // right-clicking the disguised doppel sees them as Perfect / 100 HP /
   // alive — DM Doppelganger.dm Profile_Spoof. The corpse itself only
   // carries the victim's name + role; we synthesise the rest.
-  const fakeMaxHp =
-    state.players[corpse.victimUserId]?.maxHp ?? player.maxHp;
+  const fakeMaxHp = state.players[corpse.victimUserId]?.maxHp ?? player.maxHp;
   player.roleData = {
     ...(player.roleData ?? {}),
     disguiseAsUserId: corpse.victimUserId,
