@@ -134,6 +134,9 @@ export interface PyrceMatchState {
   /** Zombie: pending infection-turn timers. */
   scheduledInfections?: Array<{ userId: string; atTick: number }>;
 
+  /** Witch: pending butterfly fx broadcasts queued by the script. */
+  scheduledButterfly?: Array<{ x: number; y: number }>;
+
   /**
    * Secret mode: the actual mode whose rules are running underneath. Players
    * see `gameModeId='secret'` and have to figure it out from gameplay. Only
@@ -209,6 +212,8 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
   const equippedInst = p.inventory.equipped
     ? p.inventory.items.find((i) => i.instanceId === p.inventory.equipped)
     : null;
+  const disguiseAs = p.roleData?.['disguiseAsUserId'] as string | undefined;
+  const disguiseUsername = p.roleData?.['disguiseUsername'] as string | undefined;
   return {
     userId: p.userId,
     username: p.username,
@@ -220,5 +225,7 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
     isAlive: p.isAlive,
     equippedItemId: equippedInst?.itemId ?? null,
     equippedItemBloody: equippedInst?.data?.['bloody'] === true,
+    ...(disguiseAs ? { disguiseAsUserId: disguiseAs } : {}),
+    ...(disguiseUsername ? { disguiseUsername } : {}),
   };
 }

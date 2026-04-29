@@ -20,6 +20,7 @@ import {
   type S2CCorpseSpawn,
   type S2CCraftResult,
   type S2CDoorState,
+  type S2CFxButterfly,
   type S2CFxSmoke,
   type S2CFxSound,
   type S2CGameResult,
@@ -582,6 +583,12 @@ export class GameWorld extends Scene {
         this.playSfx(f.key, f.x, f.y, f.volume);
         break;
       }
+      case OpCode.S2C_FX_BUTTERFLY: {
+        const f = parsePayload<S2CFxButterfly>(data);
+        if (!f) return;
+        this.playButterfly(f.x * TILE + TILE / 2, f.y * TILE + TILE / 2);
+        break;
+      }
       case OpCode.S2C_VOTE_END_GAME_TALLY: {
         const t = parsePayload<S2CVoteEndGameTally>(data);
         if (!t) return;
@@ -710,6 +717,37 @@ export class GameWorld extends Scene {
     this.sound.play(key, { volume: Math.max(0, Math.min(1, attenuated)) });
   }
 
+  /** Spawn three flapping butterflies that drift outward and fade. */
+  playButterfly(worldX: number, worldY: number): void {
+    const atlasTex = this.textures.get(ATLAS_KEY);
+    if (!this.anims.exists('fx.butterfly')) {
+      const frames = [0, 1, 2, 3]
+        .map((f) => `mh-icons/butterfly/_/S/${f}`)
+        .filter((k) => atlasTex.has(k));
+      if (frames.length === 0) return;
+      this.anims.create({
+        key: 'fx.butterfly',
+        frames: frames.map((k) => ({ key: ATLAS_KEY, frame: k })),
+        frameRate: 8,
+        repeat: 5,
+      });
+    }
+    for (let i = 0; i < 3; i++) {
+      const fx = this.add.sprite(worldX, worldY, ATLAS_KEY).setDepth(900);
+      fx.play('fx.butterfly');
+      const dx = (Math.random() - 0.5) * 80;
+      const dy = (Math.random() - 0.5) * 80 - 30;
+      this.tweens.add({
+        targets: fx,
+        x: worldX + dx,
+        y: worldY + dy,
+        alpha: 0,
+        duration: 1500,
+        onComplete: () => fx.destroy(),
+      });
+    }
+  }
+
   /**
    * Play the smokey.dmi puff anim at world coords. Hooked to the smoke_bomb
    * use op when the server starts broadcasting it; for now exposed for any
@@ -777,14 +815,17 @@ export class GameWorld extends Scene {
     const cardinal = facingToCardinal(p.facing);
     const frame = CHARACTER_SPRITES.male[cardinal];
     const rect = this.add.sprite(x, y, ATLAS_KEY, frame);
-    const hairId = this.pickHair(p.userId);
+    // Doppelganger: hair + nameplate are picked from the disguise target.
+    const hairSeed = p.disguiseAsUserId ?? p.userId;
+    const hairId = this.pickHair(hairSeed);
+    const displayName = p.disguiseUsername ?? p.username;
     const hairFr = hairFrame(hairId, cardinal);
     const atlasTex = this.textures.get(ATLAS_KEY);
     const hair = this.add
       .sprite(x, y, ATLAS_KEY, atlasTex.has(hairFr) ? hairFr : frame)
       .setDepth(rect.depth + 0.01);
     const label = this.add
-      .text(x, y - TILE / 2 - 4, p.username, {
+      .text(x, y - TILE / 2 - 4, displayName, {
         fontFamily: 'Arial',
         fontSize: 11,
         color: '#ffffff',

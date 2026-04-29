@@ -47,6 +47,7 @@ export enum OpCode {
 
   C2S_VIEW_PROFILE = 1900,
   C2S_DRAG_CORPSE = 1901,
+  C2S_DOPPELGANGER_COPY = 1902,
 
   // ===== Server → Client =====
   S2C_HELLO = 2000,
@@ -86,6 +87,7 @@ export enum OpCode {
   S2C_DOOR_STATE = 2540,
   S2C_FX_SMOKE = 2710,
   S2C_FX_SOUND = 2711,
+  S2C_FX_BUTTERFLY = 2712,
 
   S2C_VOTE_MODE_TALLY = 2810,
   S2C_VOTE_END_GAME_TALLY = 2811,

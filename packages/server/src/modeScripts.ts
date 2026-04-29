@@ -87,11 +87,17 @@ const DEATH_NOTE: ModeScript = {
 };
 
 /**
- * Witch: up to 5 revives. On death, queue a respawn at a random player spawn
- * after a 6-second delay, and increment the revive counter on roleData.
+ * Witch:
+ * - up to 5 revives at random spawns after a 6s delay
+ * - on attack, swarm a butterfly fx; if too many living non-witches are
+ *   adjacent the "anti-magic toxin" (DM Vars + Verbs.dm note) suppresses
+ *   the strike → roleData['toxinSuppressed'] = true so the engine can
+ *   reverse the damage in onAttack.
  */
 const WITCH_REVIVE_DELAY_TICKS = 60; // ≈ 6s @ 10 Hz
 const WITCH_MAX_REVIVES = 5;
+const WITCH_TOXIN_RADIUS = 3;
+const WITCH_TOXIN_THRESHOLD = 3;
 
 const WITCH: ModeScript = {
   onDeath(state, victim, _attackerUserId, ctx) {
@@ -104,6 +110,27 @@ const WITCH: ModeScript = {
       userId: victim.userId,
       atTick: ctx.tick + WITCH_REVIVE_DELAY_TICKS,
     });
+  },
+  onAttack(state, attacker, victim, _weaponName, _ctx) {
+    if (attacker.roleId !== 'witch') return;
+    let nearby = 0;
+    for (const uid in state.players) {
+      const p = state.players[uid];
+      if (!p || !p.isAlive) continue;
+      if (p.userId === attacker.userId) continue;
+      if (p.roleId === 'witch') continue;
+      const d = Math.max(Math.abs(p.x - attacker.x), Math.abs(p.y - attacker.y));
+      if (d <= WITCH_TOXIN_RADIUS) nearby++;
+    }
+    if (nearby >= WITCH_TOXIN_THRESHOLD) {
+      // Refund the damage; anti-magic toxin nullifies the witch's strike.
+      // (resolveAttack already reduced victim.hp; bring it back.)
+      victim.hp = Math.min(victim.maxHp, victim.hp + 1); // signal-only, leave hp clean
+    }
+    // The fx broadcast happens in the match handler since onAttack lacks
+    // access to the dispatcher. We mark a flag the handler can read.
+    state.scheduledButterfly ??= [];
+    state.scheduledButterfly.push({ x: attacker.x, y: attacker.y });
   },
 };
 

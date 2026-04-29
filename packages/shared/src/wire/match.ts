@@ -34,6 +34,14 @@ export interface PublicPlayerInGame {
   equippedItemId: string | null;
   /** True when the equipped item has been bloodied by a kill (visual swap). */
   equippedItemBloody: boolean;
+  /**
+   * If the player is currently disguised (Doppelganger), this is the userId
+   * of the corpse they copied — clients render their hair + nameplate using
+   * the disguise.
+   */
+  disguiseAsUserId?: string;
+  /** Username override shown when disguised (matches the copied corpse). */
+  disguiseUsername?: string;
 }
 
 export interface S2CPhaseChange {
@@ -148,4 +156,16 @@ export interface S2CProfileView {
   isAlive: boolean;
   /** Human readable condition: "Perfect" / "Hurt" / "Dying…" / "Dead". */
   condition: string;
+}
+
+export interface S2CFxButterfly {
+  /** Tile coords of the butterfly origin (witch's tile). */
+  x: number;
+  y: number;
+  durationMs: number;
+}
+
+export interface C2SDoppelgangerCopy {
+  /** Adjacent corpse to copy. */
+  corpseId: string;
 }

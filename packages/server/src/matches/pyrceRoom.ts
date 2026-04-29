@@ -11,6 +11,7 @@ import {
   type C2SContainerPut,
   type C2SContainerTake,
   type C2SDoorToggle,
+  type C2SDoppelgangerCopy,
   type C2SDragCorpse,
   type C2SInvCraft,
   type C2SInvDrop,
@@ -44,6 +45,7 @@ import {
   type S2CCorpseSpawn,
   type S2CCraftResult,
   type S2CDoorState,
+  type S2CFxButterfly,
   type S2CFxSmoke,
   type S2CFxSound,
   type S2CGameResult,
@@ -392,6 +394,9 @@ function handleMessage(
     case OpCode.C2S_DRAG_CORPSE:
       handleDragCorpse(state, m, dispatcher);
       break;
+    case OpCode.C2S_DOPPELGANGER_COPY:
+      handleDoppelgangerCopy(state, m, tick, dispatcher);
+      break;
     case OpCode.C2S_INV_CRAFT:
       handleInvCraft(state, m, dispatcher);
       break;
@@ -518,7 +523,7 @@ function handleMoveIntent(
   const ny = player.y + delta.dy;
   player.facing = req.dir as Facing;
   if (!tilemap.isPassable(nx, ny)) {
-    broadcastPlayerMoved(dispatcher, player, tick);
+    broadcastPlayerMoved(dispatcher, player, tick, state);
     return;
   }
   for (const otherId in state.players) {
@@ -529,7 +534,7 @@ function handleMoveIntent(
   player.x = nx;
   player.y = ny;
   player.lastMoveTickN = tick;
-  broadcastPlayerMoved(dispatcher, player, tick);
+  broadcastPlayerMoved(dispatcher, player, tick, state);
 }
 
 // ---------- inventory handlers ----------
@@ -601,7 +606,7 @@ function handleInvEquip(
   sendInvDelta(dispatcher, state, m.sender, { equipped: e.equipped });
   // Broadcast a position update so other clients pick up the new
   // equippedItemId in the public view (no actual movement happened).
-  broadcastPlayerMoved(dispatcher, player, state.tickN);
+  broadcastPlayerMoved(dispatcher, player, state.tickN, state);
 }
 
 function handleInvSetHotkey(
@@ -887,6 +892,40 @@ function handleDragCorpse(
   corpse.x = nx;
   corpse.y = ny;
   broadcastCorpseUpdate(dispatcher, corpse);
+}
+
+/**
+ * Doppelganger: copy an adjacent corpse's appearance. The disguise persists
+ * until the doppel attacks (DM `Doppelganger.dm` Reveal_On_Attack hook;
+ * we drop it on attack in resolveAttack indirectly via roleData clearing).
+ */
+function handleDoppelgangerCopy(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  tick: number,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  if (player.roleId !== 'doppelganger') {
+    sendError(dispatcher, m.sender, 'wrong_role', 'only the Doppelganger can copy a corpse');
+    return;
+  }
+  const req = parseBody<C2SDoppelgangerCopy>(m.data);
+  if (!req) return;
+  const corpse = state.corpses[req.corpseId];
+  if (!corpse) return;
+  if (Math.max(Math.abs(corpse.x - player.x), Math.abs(corpse.y - player.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'corpse not adjacent');
+    return;
+  }
+  player.roleData = {
+    ...(player.roleData ?? {}),
+    disguiseAsUserId: corpse.victimUserId,
+    disguiseUsername: corpse.victimUsername,
+  };
+  broadcastPlayerMoved(dispatcher, player, tick, state);
 }
 
 // ---------- voting ----------
@@ -1227,7 +1266,7 @@ function handleAttack(
   sendStamina(dispatcher, m.sender, attacker);
   // We send the attacker's facing as a movement broadcast so other clients
   // turn the sprite to face the swing direction. Coordinates unchanged.
-  broadcastPlayerMoved(dispatcher, attacker, tick);
+  broadcastPlayerMoved(dispatcher, attacker, tick, state);
 
   if (!result.hitUserId) return;
   const victim = state.players[result.hitUserId];
@@ -1250,6 +1289,20 @@ function handleAttack(
     broadcastPlayerHealth(dispatcher, attacker);
     const ap = state.presences[attacker.userId];
     if (ap) sendPlayerHP(dispatcher, ap, attacker);
+    // Drain any fx the script queued (witch butterfly, etc.).
+    if (state.scheduledButterfly && state.scheduledButterfly.length > 0) {
+      for (const f of state.scheduledButterfly) {
+        const payload: S2CFxButterfly = { x: f.x, y: f.y, durationMs: 1500 };
+        dispatcher.broadcastMessage(
+          OpCode.S2C_FX_BUTTERFLY,
+          JSON.stringify(payload),
+          null,
+          null,
+          true,
+        );
+      }
+      state.scheduledButterfly = [];
+    }
   }
 
   if (result.killed && result.corpse) {
@@ -1409,7 +1462,7 @@ function drainScheduledEffects(
       target.x = spawn.x;
       target.y = spawn.y;
       broadcastPlayerHealth(dispatcher, target);
-      broadcastPlayerMoved(dispatcher, target, tick);
+      broadcastPlayerMoved(dispatcher, target, tick, state);
       broadcastAnnouncement(dispatcher, {
         kind: 'mode_event',
         message: `${target.username} stirs back to life…`,
@@ -1491,6 +1544,7 @@ function broadcastPlayerMoved(
   dispatcher: nkruntime.MatchDispatcher,
   player: PlayerInGame,
   tick: number,
+  state?: PyrceMatchState,
 ): void {
   const equippedInst = player.inventory.equipped
     ? player.inventory.items.find((i) => i.instanceId === player.inventory.equipped)
@@ -1504,7 +1558,38 @@ function broadcastPlayerMoved(
     equippedItemId: equippedInst?.itemId ?? null,
     equippedItemBloody: equippedInst?.data?.['bloody'] === true,
   };
-  dispatcher.broadcastMessage(OpCode.S2C_PLAYER_MOVED, JSON.stringify(payload), null, null, true);
+  // Ghost-mode invisibility: when the moved player is a ghost, only the
+  // ghost themselves, Whisperers, and the dead see the broadcast (per DM
+  // mob.invisibility=2 + Ghost_Whisperer can-see).
+  const recipients = state && player.roleId === 'ghost' ? recipientsCanSee(state, player) : null;
+  dispatcher.broadcastMessage(
+    OpCode.S2C_PLAYER_MOVED,
+    JSON.stringify(payload),
+    recipients,
+    null,
+    true,
+  );
+}
+
+/** Presences whose owning player is allowed to see `target`. */
+function recipientsCanSee(state: PyrceMatchState, target: PlayerInGame): nkruntime.Presence[] {
+  const out: nkruntime.Presence[] = [];
+  for (const userId in state.presences) {
+    const viewer = state.players[userId];
+    const presence = state.presences[userId];
+    if (!presence) continue;
+    if (canSee(viewer ?? null, target)) out.push(presence);
+  }
+  return out;
+}
+
+/** True if `viewer` can perceive `target`. Ghost is hidden from civilians. */
+function canSee(viewer: PlayerInGame | null, target: PlayerInGame): boolean {
+  if (target.roleId !== 'ghost') return true;
+  if (!viewer) return true; // unaffiliated presence (spectator) — show
+  if (viewer.userId === target.userId) return true;
+  if (!viewer.isAlive || viewer.isWatching) return true; // dead can see all
+  return viewer.roleId === 'ghost' || viewer.roleId === 'whisperer';
 }
 
 function sendInvFull(
@@ -1728,7 +1813,10 @@ function sendInitialSnapshot(
   state: PyrceMatchState,
   recipient: nkruntime.Presence,
 ): void {
-  const players = Object.values(state.players).map(toPublicPlayerInGame);
+  const viewer = state.players[recipient.userId];
+  const players = Object.values(state.players)
+    .filter((p) => canSee(viewer ?? null, p))
+    .map(toPublicPlayerInGame);
   const self = state.players[recipient.userId];
   const payload: S2CInitialSnapshot = {
     phase: state.phase,
