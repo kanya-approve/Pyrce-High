@@ -38,6 +38,14 @@ export class Boot extends Scene {
       ['nailing', '/audio/nailing.ogg'],
       ['howling', '/audio/howling.ogg'],
       ['alarm', '/audio/alarm.wav'],
+      // Per-mode background music. Played in GameWorld; varies by mode.
+      ['music.normal', '/audio/title.ogg'],
+      ['music.ghost', '/audio/title_ghost.ogg'],
+      ['music.witch', '/audio/title_witch.ogg'],
+      ['music.vampire', '/audio/title_Vampire.ogg'],
+      ['music.death_note_classic', '/audio/title_shin.ogg'],
+      ['music.secret', '/audio/titlesecret.ogg'],
+      ['music.doppelganger', '/audio/Title_DG.ogg'],
     ];
     for (const [key, path] of sfx) this.load.audio(key, path);
   }

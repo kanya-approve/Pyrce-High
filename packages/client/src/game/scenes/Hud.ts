@@ -246,7 +246,7 @@ export class Hud extends Scene {
       .text(
         width / 2,
         height - 12,
-        'WASD/arrows · E interact · F attack · 1-5 hotkey · G drop · C craft Spear · T chat',
+        'WASD · E interact · F attack · 1-5 hotkey · G drop · C craft · T chat · V end-vote · K kick · B copy · R drain',
         {
           fontFamily: 'Arial',
           fontSize: 11,

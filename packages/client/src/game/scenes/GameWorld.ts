@@ -34,7 +34,11 @@ import {
   type S2CPlayerStamina,
   type S2CProfileView,
   type S2CRoleAssigned,
+  type S2CSearchDenied,
+  type S2CSearchRequest,
+  type S2CSelfRoleState,
   type S2CVoteEndGameTally,
+  type S2CVoteKickTally,
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
   type TilemapJson,
@@ -108,6 +112,9 @@ export class GameWorld extends Scene {
     C: Phaser.Input.Keyboard.Key;
     I: Phaser.Input.Keyboard.Key;
     V: Phaser.Input.Keyboard.Key;
+    K: Phaser.Input.Keyboard.Key;
+    B: Phaser.Input.Keyboard.Key;
+    R: Phaser.Input.Keyboard.Key;
     ONE: Phaser.Input.Keyboard.Key;
     TWO: Phaser.Input.Keyboard.Key;
     THREE: Phaser.Input.Keyboard.Key;
@@ -176,7 +183,7 @@ export class GameWorld extends Scene {
       ) as typeof this.cursors;
       this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D', false) as typeof this.wasdKeys;
       this.actionKeys = this.input.keyboard.addKeys(
-        'E,F,G,C,I,V,ONE,TWO,THREE,FOUR,FIVE',
+        'E,F,G,C,I,V,K,B,R,ONE,TWO,THREE,FOUR,FIVE',
         false,
       ) as typeof this.actionKeys;
       const guard = (fn: () => void) => () => {
@@ -206,6 +213,18 @@ export class GameWorld extends Scene {
       this.actionKeys.V.on(
         'down',
         guard(() => this.handleEndGameVote()),
+      );
+      this.actionKeys.K.on(
+        'down',
+        guard(() => this.openVoteKickPicker()),
+      );
+      this.actionKeys.B.on(
+        'down',
+        guard(() => this.handleDoppelCopy()),
+      );
+      this.actionKeys.R.on(
+        'down',
+        guard(() => this.handleVampireDrain()),
       );
       this.actionKeys.ONE.on(
         'down',
@@ -289,9 +308,28 @@ export class GameWorld extends Scene {
     });
 
     this.match.onMatchData((msg) => this.handleMatchData(msg.op_code, msg.data));
+
+    // Background music: pick the mode-themed track. Falls back to the
+    // default if the mode-specific track isn't loaded.
+    this.startBackgroundMusic(this.game.registry.get('gameWorld.gameModeId') as string | null);
+  }
+
+  private bgm?: Phaser.Sound.BaseSound;
+  private startBackgroundMusic(modeId: string | null): void {
+    const candidates = [modeId ? `music.${modeId}` : null, 'music.normal'].filter(
+      (k): k is string => k !== null,
+    );
+    for (const key of candidates) {
+      if (this.cache.audio.exists(key)) {
+        this.bgm = this.sound.add(key, { loop: true, volume: 0.3 });
+        this.bgm.play();
+        return;
+      }
+    }
   }
 
   shutdown(): void {
+    this.bgm?.stop();
     this.match.onMatchData(() => {});
     this.game.events.off('chat:bubble');
     this.game.events.off('chat:typing');
@@ -448,10 +486,187 @@ export class GameWorld extends Scene {
     );
   }
 
+  private openVoteKickPicker(): void {
+    this.openTargetPicker('Vote-kick a player', (targetUserId) => {
+      void this.match.sendMatch(OpCode.C2S_VOTE_KICK, { targetUserId });
+      this.notifyHud('Kick vote cast');
+    });
+  }
+
+  /** Doppelganger: copy the nearest adjacent corpse's appearance. */
+  private handleDoppelCopy(): void {
+    const me = this.players.get(this.match.userId)?.state;
+    if (!me) return;
+    if (this.gameInfo.role?.roleId !== 'doppelganger') {
+      this.notifyHud('Only the Doppelganger can copy corpses');
+      return;
+    }
+    const target = this.nearestAdjacentCorpse(me.x, me.y);
+    if (!target) {
+      this.notifyHud('No adjacent corpse to copy');
+      return;
+    }
+    void this.match.sendMatch(OpCode.C2S_DOPPELGANGER_COPY, { corpseId: target });
+    this.notifyHud('Disguised as the body');
+  }
+
+  /** Vampire: drain blood from the nearest adjacent corpse for +30 HP. */
+  private handleVampireDrain(): void {
+    const me = this.players.get(this.match.userId)?.state;
+    if (!me) return;
+    if (this.gameInfo.role?.roleId !== 'vampire') {
+      this.notifyHud('Only the Vampire can drain corpses');
+      return;
+    }
+    const target = this.nearestAdjacentCorpse(me.x, me.y);
+    if (!target) {
+      this.notifyHud('No adjacent corpse to drain');
+      return;
+    }
+    void this.match.sendMatch(OpCode.C2S_VAMPIRE_DRAIN, { corpseId: target });
+  }
+
+  /** Killer's prompt to allow/deny a corpse search of a body they made. */
+  private openSearchConsent(req: S2CSearchRequest): void {
+    const parent = this.game.canvas.parentElement;
+    if (!parent) return;
+    const container = document.createElement('div');
+    container.style.position = 'absolute';
+    container.style.left = '50%';
+    container.style.top = '50%';
+    container.style.transform = 'translate(-50%, -50%)';
+    container.style.minWidth = '320px';
+    container.style.background = 'rgba(0,0,0,0.92)';
+    container.style.border = '2px solid #ffd866';
+    container.style.padding = '16px';
+    container.style.zIndex = '2300';
+    container.style.color = '#ffffff';
+    container.style.fontFamily = 'Arial, sans-serif';
+    container.style.fontSize = '14px';
+    container.style.textAlign = 'center';
+    container.innerHTML = `<div style="font-weight:bold;margin-bottom:10px">${req.searcherUsername} wants to search your victim's body.</div>`;
+    const yes = document.createElement('button');
+    yes.textContent = 'Allow';
+    yes.style.cssText =
+      'margin: 6px; padding: 8px 18px; cursor: pointer; background: #335533; color: #aaffaa; border: 1px solid #66aa66; font-size: 14px;';
+    yes.addEventListener('click', () => {
+      void this.match.sendMatch(OpCode.C2S_SEARCH_CONSENT, {
+        requestId: req.requestId,
+        accept: true,
+      });
+      container.remove();
+    });
+    const no = document.createElement('button');
+    no.textContent = 'Deny';
+    no.style.cssText =
+      'margin: 6px; padding: 8px 18px; cursor: pointer; background: #553333; color: #ffaaaa; border: 1px solid #aa6666; font-size: 14px;';
+    no.addEventListener('click', () => {
+      void this.match.sendMatch(OpCode.C2S_SEARCH_CONSENT, {
+        requestId: req.requestId,
+        accept: false,
+      });
+      container.remove();
+    });
+    container.appendChild(yes);
+    container.appendChild(no);
+    parent.appendChild(container);
+    // Auto-deny after 12s if no response.
+    setTimeout(() => {
+      if (container.parentElement) {
+        void this.match.sendMatch(OpCode.C2S_SEARCH_CONSENT, {
+          requestId: req.requestId,
+          accept: false,
+        });
+        container.remove();
+      }
+    }, 12000);
+  }
+
+  private nearestAdjacentCorpse(x: number, y: number): string | null {
+    let best: { id: string; dist: number } | null = null;
+    for (const c of this.corpseSprites.values()) {
+      const dist = Math.max(Math.abs(c.data.x - x), Math.abs(c.data.y - y));
+      if (dist > 1) continue;
+      if (!best || dist < best.dist) best = { id: c.corpseId, dist };
+    }
+    return best?.id ?? null;
+  }
+
   private handleHotkey(slot: 1 | 2 | 3 | 4 | 5): void {
     const ref = this.inventory.hotkeys[slot - 1];
     if (!ref) return;
+    const inst = this.inventory.items.find((i) => i.instanceId === ref);
+    const def = inst ? ITEMS[inst.itemId] : null;
+    // Death Note needs a target; open the Kira picker before sending use.
+    if (def?.use?.kind === 'death_note_write') {
+      this.openTargetPicker('Pick a victim for the Death Note', (targetUserId) => {
+        void this.match.sendMatch(OpCode.C2S_INV_USE, {
+          instanceId: ref,
+          targetUserId,
+        });
+      });
+      return;
+    }
     void this.match.sendMatch(OpCode.C2S_INV_USE, { instanceId: ref });
+  }
+
+  /** Right-side modal listing alive other players; calls back when one is clicked. */
+  private openTargetPicker(title: string, onPick: (userId: string) => void): void {
+    const parent = this.game.canvas.parentElement;
+    if (!parent) return;
+    const container = document.createElement('div');
+    container.style.position = 'absolute';
+    container.style.right = '12px';
+    container.style.top = '70px';
+    container.style.minWidth = '220px';
+    container.style.background = 'rgba(0,0,0,0.85)';
+    container.style.border = '1px solid #88aaff';
+    container.style.padding = '8px';
+    container.style.zIndex = '2200';
+    container.style.color = '#ffffff';
+    container.style.fontFamily = 'Arial, sans-serif';
+    container.style.fontSize = '13px';
+    const heading = document.createElement('div');
+    heading.textContent = title;
+    heading.style.fontWeight = 'bold';
+    heading.style.marginBottom = '6px';
+    container.appendChild(heading);
+    let chosen = false;
+    for (const sprite of this.players.values()) {
+      if (sprite.userId === this.match.userId) continue;
+      if (!sprite.state.isAlive) continue;
+      const row = document.createElement('button');
+      row.textContent = sprite.state.username;
+      row.style.display = 'block';
+      row.style.width = '100%';
+      row.style.margin = '2px 0';
+      row.style.padding = '6px 8px';
+      row.style.cursor = 'pointer';
+      row.style.background = '#223344';
+      row.style.color = '#ffffff';
+      row.style.border = '1px solid #88aaff';
+      row.style.fontSize = '13px';
+      row.addEventListener('click', () => {
+        if (chosen) return;
+        chosen = true;
+        onPick(sprite.userId);
+        container.remove();
+      });
+      container.appendChild(row);
+    }
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    cancel.style.display = 'block';
+    cancel.style.width = '100%';
+    cancel.style.marginTop = '6px';
+    cancel.style.padding = '6px';
+    cancel.style.cursor = 'pointer';
+    cancel.style.background = '#332222';
+    cancel.style.color = '#ffaaaa';
+    cancel.style.border = '1px solid #aa6666';
+    cancel.addEventListener('click', () => container.remove());
+    container.appendChild(cancel);
+    parent.appendChild(container);
   }
 
   private handleDropEquipped(): void {
@@ -630,6 +845,36 @@ export class GameWorld extends Scene {
         const p = parsePayload<S2CProfileView>(data);
         if (!p) return;
         this.notifyHud(`${p.username}: ${p.condition} (${p.hp}/${p.maxHp})`);
+        break;
+      }
+      case OpCode.S2C_SEARCH_REQUEST: {
+        const r = parsePayload<S2CSearchRequest>(data);
+        if (!r) return;
+        this.openSearchConsent(r);
+        break;
+      }
+      case OpCode.S2C_SEARCH_DENIED: {
+        const r = parsePayload<S2CSearchDenied>(data);
+        if (!r) return;
+        this.notifyHud(r.reason);
+        break;
+      }
+      case OpCode.S2C_VOTE_KICK_TALLY: {
+        const t = parsePayload<S2CVoteKickTally>(data);
+        if (!t) return;
+        if (t.resolved) this.notifyHud(`${t.targetUsername} was vote-kicked`);
+        else this.notifyHud(`Kick vote ${t.targetUsername}: ${t.yes}/${t.alive}`);
+        break;
+      }
+      case OpCode.S2C_SELF_ROLE_STATE: {
+        const s = parsePayload<S2CSelfRoleState>(data);
+        if (!s) return;
+        if (s.witchRevivesLeft !== undefined) {
+          this.notifyHud(`Witch: ${s.witchRevivesLeft} revives left`);
+        }
+        if (s.vampireDrained !== undefined) {
+          this.notifyHud(`Vampire: ${s.vampireDrained} drained`);
+        }
         break;
       }
       case OpCode.S2C_DOOR_STATE: {

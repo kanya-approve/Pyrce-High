@@ -190,3 +190,39 @@ export interface C2SVendingBuy {
   x: number;
   y: number;
 }
+
+export interface C2SVampireDrain {
+  /** Adjacent corpse to drain blood from. */
+  corpseId: string;
+}
+
+export interface C2SSearchConsent {
+  /** Search request id from S2CSearchRequest. */
+  requestId: string;
+  accept: boolean;
+}
+
+export interface S2CSearchRequest {
+  /** Unique id; the responder echoes it in C2SSearchConsent. */
+  requestId: string;
+  searcherUserId: string;
+  searcherUsername: string;
+  corpseId: string;
+}
+
+export interface S2CSearchDenied {
+  corpseId: string;
+  reason: string;
+}
+
+/**
+ * Self-only role-state telemetry: counts only the role itself needs to know
+ * (witch revives remaining, vampire bodies drained, etc.). Exposed so the
+ * HUD can render a counter without the public PlayerInGame leaking it.
+ */
+export interface S2CSelfRoleState {
+  /** Witch: revives left (5 max). */
+  witchRevivesLeft?: number;
+  /** Vampire: corpses drained this round. */
+  vampireDrained?: number;
+}

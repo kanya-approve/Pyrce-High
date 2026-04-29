@@ -171,6 +171,7 @@ const DOPPELGANGER: GameModeDef = {
     { type: 'lastFactionStanding' },
     { type: 'timeUp', gameHour: 6, ampm: 'AM', winningAllegiance: 'survivors' },
   ],
+  scriptId: 'doppelganger',
 };
 
 const SECRET: GameModeDef = {

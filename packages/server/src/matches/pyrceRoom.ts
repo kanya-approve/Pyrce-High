@@ -21,8 +21,10 @@ import {
   type C2SInvUse,
   type C2SLobbyStartGame,
   type C2SMoveIntent,
+  type C2SSearchConsent,
   type C2SSearchCorpse,
   type C2STakeFromCorpse,
+  type C2SVampireDrain,
   type C2SVendingBuy,
   type C2SViewProfile,
   type C2SVoteEndGame,
@@ -30,6 +32,7 @@ import {
   type C2SVoteMode,
   DIRECTION_DELTAS,
   type Facing,
+  type GameModeId,
   getMode,
   ITEMS,
   type ItemInstanceId,
@@ -62,6 +65,9 @@ import {
   type S2CPlayerStamina,
   type S2CProfileView,
   type S2CRoleAssigned,
+  type S2CSearchDenied,
+  type S2CSearchRequest,
+  type S2CSelfRoleState,
   type S2CVoteEndGameTally,
   type S2CVoteKickTally,
   type S2CVoteModeTally,
@@ -305,16 +311,19 @@ export function matchLoop(
         state.phase = MatchPhase.Ending;
         const reveals = buildReveals(state);
         const winnerIds = new Set(result.winners.map((p) => p.userId));
+        const summary = state.secretActualModeId
+          ? `Secret was actually ${getMode(state.secretActualModeId)?.displayName ?? state.secretActualModeId}. ${result.summary}`
+          : result.summary;
         const payload: S2CGameResult = {
-          modeId: modeDef.id,
+          modeId: (state.gameModeId ?? modeDef.id) as GameModeId,
           reason: result.reason,
-          summary: result.summary,
+          summary,
           reveals,
           winners: reveals.filter((r) => winnerIds.has(r.userId)),
         };
         broadcastGameResult(dispatcher, payload);
         refreshLabel(dispatcher, state);
-        logger.info('round end: %s — %s', result.reason, result.summary);
+        logger.info('round end: %s — %s', result.reason, summary);
       }
     }
   }
@@ -378,6 +387,9 @@ function handleMessage(
     case OpCode.C2S_SEARCH_CORPSE:
       handleSearchCorpse(state, m, dispatcher);
       break;
+    case OpCode.C2S_SEARCH_CONSENT:
+      handleSearchConsent(state, m, dispatcher);
+      break;
     case OpCode.C2S_TAKE_FROM_CORPSE:
       handleTakeFromCorpse(state, m, dispatcher);
       break;
@@ -419,6 +431,9 @@ function handleMessage(
       break;
     case OpCode.C2S_DOPPELGANGER_COPY:
       handleDoppelgangerCopy(state, m, tick, dispatcher);
+      break;
+    case OpCode.C2S_VAMPIRE_DRAIN:
+      handleVampireDrain(state, m, dispatcher);
       break;
     case OpCode.C2S_INV_CRAFT:
       handleInvCraft(state, m, dispatcher);
@@ -918,6 +933,48 @@ function handleDragCorpse(
 }
 
 /**
+ * Vampire: drain blood from an adjacent corpse for +30 HP. One drain per
+ * corpse — `corpse.drained=true` blocks repeats.
+ */
+const VAMPIRE_DRAIN_HEAL = 30;
+
+function handleVampireDrain(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  if (player.roleId !== 'vampire') {
+    sendError(dispatcher, m.sender, 'wrong_role', 'only the Vampire can drain a corpse');
+    return;
+  }
+  const req = parseBody<C2SVampireDrain>(m.data);
+  if (!req) return;
+  const corpse = state.corpses[req.corpseId];
+  if (!corpse) return;
+  if (corpse.drained) {
+    sendError(dispatcher, m.sender, 'already_drained', 'this body has been drained');
+    return;
+  }
+  if (Math.max(Math.abs(corpse.x - player.x), Math.abs(corpse.y - player.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'corpse not adjacent');
+    return;
+  }
+  corpse.drained = true;
+  player.hp = Math.min(player.maxHp, player.hp + VAMPIRE_DRAIN_HEAL);
+  player.roleData = {
+    ...(player.roleData ?? {}),
+    drained: ((player.roleData?.['drained'] as number | undefined) ?? 0) + 1,
+  };
+  broadcastPlayerHealth(dispatcher, player);
+  sendPlayerHP(dispatcher, m.sender, player);
+  sendSelfRoleState(dispatcher, m.sender, player);
+  broadcastCorpseUpdate(dispatcher, corpse);
+}
+
+/**
  * Doppelganger: copy an adjacent corpse's appearance. The disguise persists
  * until the doppel attacks (DM `Doppelganger.dm` Reveal_On_Attack hook;
  * we drop it on attack in resolveAttack indirectly via roleData clearing).
@@ -1143,12 +1200,14 @@ function handleVoteEndGame(
   if (resolved) {
     state.ended = true;
     state.phase = MatchPhase.Ending;
-    const modeDef = getMode(effectiveModeId(state));
     const reveals = buildReveals(state);
+    const summary = state.secretActualModeId
+      ? `Round ended by player vote. Secret was actually ${getMode(state.secretActualModeId)?.displayName ?? state.secretActualModeId}.`
+      : 'Round ended by player vote.';
     const result: S2CGameResult = {
-      modeId: modeDef?.id ?? 'normal',
+      modeId: (state.gameModeId ?? 'normal') as GameModeId,
       reason: 'end_game_vote',
-      summary: 'Round ended by player vote.',
+      summary,
       reveals,
       winners: [],
     };
@@ -1527,11 +1586,86 @@ function handleSearchCorpse(
     sendError(dispatcher, m.sender, 'too_far', 'corpse not adjacent');
     return;
   }
+  // Consent gate: if the killer is alive in the match, ask them first.
+  // No killer or killer dead → auto-grant. Killer is the searcher → auto.
+  const killerId = c.killerUserId;
+  const killer = killerId ? state.players[killerId] : null;
+  if (killer && killer.isAlive && killer.userId !== player.userId) {
+    const requestId = newCorpseId(); // reuse the random-id helper
+    state.searchRequests ??= {};
+    state.searchRequests[requestId] = {
+      searcherUserId: player.userId,
+      corpseId: c.corpseId,
+      askedAtTick: state.tickN,
+    };
+    const killerPresence = state.presences[killer.userId];
+    if (killerPresence) {
+      const payload: S2CSearchRequest = {
+        requestId,
+        searcherUserId: player.userId,
+        searcherUsername: player.username,
+        corpseId: c.corpseId,
+      };
+      dispatcher.broadcastMessage(
+        OpCode.S2C_SEARCH_REQUEST,
+        JSON.stringify(payload),
+        [killerPresence],
+        null,
+        true,
+      );
+    }
+    return;
+  }
+  // No consent gate → reply immediately.
+  sendCorpseContents(dispatcher, m.sender, c);
+}
+
+function handleSearchConsent(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const responder = state.players[m.sender.userId];
+  if (!responder) return;
+  const req = parseBody<C2SSearchConsent>(m.data);
+  if (!req) return;
+  const pending = state.searchRequests?.[req.requestId];
+  if (!pending) return;
+  const corpse = state.corpses[pending.corpseId];
+  // Only the corpse's killer can answer.
+  if (!corpse || corpse.killerUserId !== responder.userId) return;
+  delete state.searchRequests?.[req.requestId];
+
+  const searcherPresence = state.presences[pending.searcherUserId];
+  if (!searcherPresence) return;
+  if (req.accept) {
+    sendCorpseContents(dispatcher, searcherPresence, corpse);
+  } else {
+    const payload: S2CSearchDenied = {
+      corpseId: corpse.corpseId,
+      reason: `${responder.username} declined your search`,
+    };
+    dispatcher.broadcastMessage(
+      OpCode.S2C_SEARCH_DENIED,
+      JSON.stringify(payload),
+      [searcherPresence],
+      null,
+      true,
+    );
+  }
+}
+
+function sendCorpseContents(
+  dispatcher: nkruntime.MatchDispatcher,
+  recipient: nkruntime.Presence,
+  c: Corpse,
+): void {
   const payload: S2CCorpseContents = { corpseId: c.corpseId, contents: c.contents };
   dispatcher.broadcastMessage(
     OpCode.S2C_CORPSE_CONTENTS,
     JSON.stringify(payload),
-    [m.sender],
+    [recipient],
     null,
     true,
   );
@@ -1652,6 +1786,8 @@ function drainScheduledEffects(
         kind: 'mode_event',
         message: `${target.username} stirs back to life…`,
       });
+      const targetPresence = state.presences[target.userId];
+      if (targetPresence) sendSelfRoleState(dispatcher, targetPresence, target);
       logger.info('witch revive: %s', target.userId);
     }
     state.scheduledRevives = remaining;
@@ -2023,6 +2159,31 @@ function sendRoleAssigned(
   };
   dispatcher.broadcastMessage(
     OpCode.S2C_PLAYER_ROLE_ASSIGNED,
+    JSON.stringify(payload),
+    [recipient],
+    null,
+    true,
+  );
+  // Also send the self-role-state once so the HUD can render counters.
+  sendSelfRoleState(dispatcher, recipient, player);
+}
+
+function sendSelfRoleState(
+  dispatcher: nkruntime.MatchDispatcher,
+  recipient: nkruntime.Presence,
+  player: PlayerInGame,
+): void {
+  const payload: S2CSelfRoleState = {};
+  if (player.roleId === 'witch') {
+    const used = (player.roleData?.['revives'] as number | undefined) ?? 0;
+    payload.witchRevivesLeft = Math.max(0, 5 - used);
+  } else if (player.roleId === 'vampire') {
+    payload.vampireDrained = (player.roleData?.['drained'] as number | undefined) ?? 0;
+  } else {
+    return; // no relevant counters for this role
+  }
+  dispatcher.broadcastMessage(
+    OpCode.S2C_SELF_ROLE_STATE,
     JSON.stringify(payload),
     [recipient],
     null,

@@ -69,6 +69,8 @@ export interface Corpse {
   contents: import('@pyrce/shared').ItemInstance[];
   discovered: boolean;
   discoveredByUserId: string | null;
+  /** Vampire mode: true once the body's blood has been drained. */
+  drained?: boolean;
 }
 
 export interface PyrceMatchState {
@@ -148,6 +150,18 @@ export interface PyrceMatchState {
 
   /** Witch: pending butterfly fx broadcasts queued by the script. */
   scheduledButterfly?: Array<{ x: number; y: number }>;
+
+  /**
+   * In-flight corpse-search consent prompts: requestId → details.
+   * Cleared on accept/decline or 15s timeout.
+   */
+  searchRequests?: {
+    [requestId: string]: {
+      searcherUserId: string;
+      corpseId: string;
+      askedAtTick: number;
+    };
+  };
 
   /**
    * Secret mode: the actual mode whose rules are running underneath. Players

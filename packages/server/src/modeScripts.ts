@@ -168,6 +168,22 @@ const VAMPIRE: ModeScript = {
   },
 };
 
+/**
+ * Doppelganger reveal-on-attack: any swing clears the copied corpse
+ * disguise so the doppel reverts to their own appearance. Mirrors DM
+ * `Doppelganger.dm` Reveal_On_Attack hook.
+ */
+const DOPPELGANGER: ModeScript = {
+  onAttack(_state, attacker, _victim, _weaponName, _ctx) {
+    if (attacker.roleId !== 'doppelganger') return;
+    if (!attacker.roleData?.['disguiseAsUserId']) return;
+    const next = { ...(attacker.roleData ?? {}) };
+    delete next['disguiseAsUserId'];
+    delete next['disguiseUsername'];
+    attacker.roleData = next;
+  },
+};
+
 /** Stub registrations for modes whose scripts haven't shipped yet. */
 const NOOP: ModeScript = {};
 
@@ -176,6 +192,7 @@ export const MODE_SCRIPTS: Record<string, ModeScript> = {
   witch: WITCH,
   zombie: ZOMBIE,
   vampire: VAMPIRE,
+  doppelganger: DOPPELGANGER,
   // Below modes name a script but the imperative behaviour is still
   // declarative-only; left as no-ops so a missing scriptId never throws.
   secret: NOOP,
