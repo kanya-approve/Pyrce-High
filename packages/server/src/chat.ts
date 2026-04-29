@@ -66,12 +66,21 @@ export function routeChat(
         include = true;
         break;
       case ChatChannel.Dead:
-      case ChatChannel.Ghost:
-      case ChatChannel.Shinigami:
       case ChatChannel.Watcher:
-        // M6: only dead/spectating players see these. Mode-specific role
-        // gating (Ghost / Shinigami / Watcher) lands in M5.x.
         include = !player.isAlive || player.isWatching;
+        break;
+      case ChatChannel.Ghost:
+        // Sender must be a ghost; recipients are the ghost + whisperers
+        // (alive whisperers can hear the ghost's whispers).
+        if (sender.roleId !== 'ghost') return { recipients: [], bubble: false };
+        include = player.roleId === 'ghost' || player.roleId === 'whisperer';
+        break;
+      case ChatChannel.Shinigami:
+        // Death Note: only Kira + Shinigami hear; sender must be one too.
+        if (sender.roleId !== 'kira' && sender.roleId !== 'shinigami') {
+          return { recipients: [], bubble: false };
+        }
+        include = player.roleId === 'kira' || player.roleId === 'shinigami';
         break;
     }
 

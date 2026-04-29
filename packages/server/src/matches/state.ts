@@ -20,6 +20,9 @@ import type { GroundItem } from '../world/groundItems.js';
  * it MUST stay server-side. The shared package only exports DTOs that are
  * safe for the browser to import.
  */
+/** Lethal weapons that apply a bleed-over-time. */
+export const BLEEDING_WEAPONS: readonly string[] = ['knife', 'billhook', 'axe', 'spear'];
+
 export interface PlayerInGame {
   userId: string;
   username: string;
@@ -140,6 +143,9 @@ export interface PyrceMatchState {
     killerUserId: string | null;
     cause: string;
     atTick: number;
+    /** Tick at which the victim should be warned ahead of the kill. */
+    warnAtTick?: number;
+    warned?: boolean;
   }>;
 
   /** Witch: pending revive timers. */
@@ -166,8 +172,17 @@ export interface PyrceMatchState {
   /** Per-userId corpse-pull state: which corpse is each player dragging. */
   pullingCorpse?: { [userId: string]: string };
 
-  /** Per-userId KO timers: tick when the KO ends (sedative). */
+  /** Per-userId KO timers: tick when the KO ends. */
   koUntilTick?: { [userId: string]: number };
+
+  /** Per-userId bleed timers: tick when the bleed effect ends. */
+  bleedUntilTick?: { [userId: string]: number };
+
+  /** Per-userId frozen timers: tick when the frozen state ends (feather). */
+  frozenUntilTick?: { [userId: string]: number };
+
+  /** Doors locked by mode setup; key is `${x},${y}`. */
+  lockedDoors?: { [coordKey: string]: true };
 
   /** Random 3-digit door code used by door_code_view items. */
   doorCode?: string;

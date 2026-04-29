@@ -25,6 +25,7 @@ import {
   type S2CFxFeather,
   type S2CFxSmoke,
   type S2CFxSound,
+  type S2CFxSwing,
   type S2CGameResult,
   type S2CGhostSense,
   type S2CInitialSnapshot,
@@ -37,6 +38,7 @@ import {
   type S2CPlayerHP,
   type S2CPlayerMoved,
   type S2CPlayerStamina,
+  type S2CPlayerStatus,
   type S2CProfileView,
   type S2CRoleAssigned,
   type S2CSearchDenied,
@@ -174,6 +176,7 @@ export class GameWorld extends Scene {
 
     this.renderContainerHotspots();
     this.renderDoors();
+    this.renderSpawnMarkers();
     for (const p of initialPlayers) this.spawnPlayer(p);
     const me = this.players.get(this.match.userId);
     if (me) this.cameras.main.startFollow(me.rect, true, 0.1, 0.1);
@@ -568,6 +571,48 @@ export class GameWorld extends Scene {
     container.appendChild(close);
     parent.appendChild(container);
     setTimeout(() => container.parentElement && container.remove(), 30000);
+  }
+
+  /** Quick rotation tween on the in-hand sprite to suggest a weapon swing. */
+  playSwingFx(userId: string): void {
+    const sprite = this.players.get(userId);
+    if (!sprite?.hand) return;
+    const hand = sprite.hand;
+    this.tweens.add({
+      targets: hand,
+      angle: { from: 0, to: 60 },
+      duration: 80,
+      yoyo: true,
+      onComplete: () => hand.setAngle(0),
+    });
+  }
+
+  /** Purple-tinted echoes that fade in place — vampire dash. */
+  spawnDashTrail(tileX: number, tileY: number): void {
+    const wx = tileX * TILE + TILE / 2;
+    const wy = tileY * TILE + TILE / 2;
+    for (let i = 0; i < 4; i++) {
+      const echo = this.add
+        .image(wx, wy, ATLAS_KEY, CHARACTER_SPRITES.male.S)
+        .setTint(0xaa55ff)
+        .setAlpha(0.5 - i * 0.1)
+        .setDepth(2);
+      this.tweens.add({
+        targets: echo,
+        alpha: 0,
+        duration: 400 + i * 80,
+        onComplete: () => echo.destroy(),
+      });
+    }
+  }
+
+  /** Subtle dot on each spawn tile so map authors / spectators can see them. */
+  private renderSpawnMarkers(): void {
+    for (const sp of this.map.spawns) {
+      this.add
+        .circle(sp.x * TILE + TILE / 2, sp.y * TILE + TILE / 2, 3, 0xffd866, 0.35)
+        .setDepth(0.4);
+    }
   }
 
   /** Paper modal: read-only view, write input, or airplane target picker. */
@@ -969,8 +1014,14 @@ export class GameWorld extends Scene {
         if (!d) return;
         const s = this.players.get(d.userId);
         if (s) {
+          // Fall-down anim instead of an instant alpha pop.
+          this.tweens.add({
+            targets: [s.rect, s.hair],
+            angle: 90,
+            alpha: 0.55,
+            duration: 400,
+          });
           s.rect.setTint(0x666666);
-          s.rect.setAlpha(0.55);
           s.label.setText(`†${s.state.username}`);
           this.updateHpBar(s);
         }
@@ -1000,6 +1051,19 @@ export class GameWorld extends Scene {
         const f = parsePayload<S2CFxSound>(data);
         if (!f) return;
         this.playSfx(f.key, f.x, f.y, f.volume);
+        if (f.key === 'quickdash') this.spawnDashTrail(f.x, f.y);
+        break;
+      }
+      case OpCode.S2C_FX_SWING: {
+        const s = parsePayload<S2CFxSwing>(data);
+        if (!s) return;
+        this.playSwingFx(s.userId);
+        break;
+      }
+      case OpCode.S2C_PLAYER_STATUS: {
+        const st = parsePayload<S2CPlayerStatus>(data);
+        if (!st) return;
+        this.scene.get('Hud').events.emit('hud:status', st);
         break;
       }
       case OpCode.S2C_FX_BUTTERFLY: {

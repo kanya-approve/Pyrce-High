@@ -10,6 +10,7 @@ import {
   type C2SContainerLook,
   type C2SContainerPut,
   type C2SContainerTake,
+  type C2SDoorCodeEntry,
   type C2SDoorToggle,
   type C2SDoppelgangerCopy,
   type C2SDragCorpse,
@@ -59,6 +60,7 @@ import {
   type S2CFxFeather,
   type S2CFxSmoke,
   type S2CFxSound,
+  type S2CFxSwing,
   type S2CGameResult,
   type S2CGhostSense,
   type S2CInitialSnapshot,
@@ -72,6 +74,7 @@ import {
   type S2CPlayerHP,
   type S2CPlayerMoved,
   type S2CPlayerStamina,
+  type S2CPlayerStatus,
   type S2CProfileView,
   type S2CRoleAssigned,
   type S2CSearchDenied,
@@ -102,6 +105,7 @@ import { type ContainerInstance, seedContainers } from '../world/containers.js';
 import { fromInstance } from '../world/groundItems.js';
 import { tilemap } from '../world/tilemap.js';
 import {
+  BLEEDING_WEAPONS,
   buildLabel,
   type Corpse,
   countPresences,
@@ -263,6 +267,57 @@ export function matchLoop(
   // Whisperer ghost-sense: periodic directional clue. Cheap; only fires
   // every 20 ticks (~2s) to avoid spamming.
   if (tick % 20 === 0) broadcastGhostSenseToWhisperers(state, dispatcher);
+
+  // Bleed tick: every 10 ticks (1s) deal 2 HP to anyone with an active
+  // bleed timer; expire when the timer's reached.
+  if (state.bleedUntilTick && tick % 10 === 0) {
+    for (const uid in state.bleedUntilTick) {
+      const until = state.bleedUntilTick[uid] ?? 0;
+      const p = state.players[uid];
+      if (!p || !p.isAlive) {
+        delete state.bleedUntilTick[uid];
+        continue;
+      }
+      if (tick >= until) {
+        delete state.bleedUntilTick[uid];
+        pushStatus(state, dispatcher, p);
+        continue;
+      }
+      p.hp = Math.max(0, p.hp - 2);
+      broadcastPlayerHealth(dispatcher, p);
+      const pres = state.presences[uid];
+      if (pres) sendPlayerHP(dispatcher, pres, p);
+      // Bleeding can kill — convert to a corpse if HP hits 0.
+      if (p.hp === 0) {
+        p.isAlive = false;
+        p.isWatching = true;
+        const corpse: Corpse = {
+          corpseId: newCorpseId(),
+          victimUserId: p.userId,
+          victimUsername: p.username,
+          victimRealName: p.realName,
+          killerUserId: null,
+          cause: 'Bled out',
+          x: p.x,
+          y: p.y,
+          contents: p.inventory.items.slice(),
+          discovered: false,
+          discoveredByUserId: null,
+        };
+        p.inventory = {
+          items: [],
+          hotkeys: [null, null, null, null, null],
+          equipped: null,
+          weight: 0,
+          weightCap: p.inventory.weightCap,
+        };
+        state.corpses[corpse.corpseId] = corpse;
+        broadcastPlayerDied(dispatcher, p, null, 'Bled out');
+        broadcastCorpseUpdate(dispatcher, corpse);
+        delete state.bleedUntilTick[uid];
+      }
+    }
+  }
 
   // Drop expired witch invisibility.
   for (const uid in state.players) {
@@ -460,6 +515,12 @@ function handleMessage(
     case OpCode.C2S_DOOR_TOGGLE:
       handleDoorToggle(state, m, dispatcher);
       break;
+    case OpCode.C2S_DOOR_CODE_ENTRY:
+      handleDoorCodeEntry(state, m, dispatcher);
+      break;
+    case OpCode.C2S_THROW:
+      handleThrow(state, m, tick, dispatcher);
+      break;
     case OpCode.C2S_VENDING_BUY:
       handleVendingBuy(state, m, dispatcher);
       break;
@@ -575,6 +636,15 @@ function handleStartGame(
   state.endGameVotes = {};
   // Random 3-digit code used by door_code_paper / door_code_view.
   state.doorCode = `${Math.floor(100 + Math.random() * 900)}`;
+  // Lock ~5 random doors so the door code matters.
+  state.lockedDoors = {};
+  const allDoors = tilemap.raw.doors;
+  const pool = allDoors.slice();
+  for (let i = 0; i < Math.min(5, pool.length); i++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    const d = pool.splice(idx, 1)[0];
+    if (d) state.lockedDoors[`${d.x},${d.y}`] = true;
+  }
   assignSpawns(state);
   state.containers = seedContainers();
   state.groundItems = {};
@@ -584,6 +654,7 @@ function handleStartGame(
   assignRoles(state, modeDef);
   applyItemGrants(state, modeDef, logger);
   relocateSpecialSpawns(state);
+  seedDetectiveClue(state);
   state.clock = newClock(state.tickN);
   broadcastPhaseChange(dispatcher, state);
   // Secret mode shows the secret announcement; everyone else shows the
@@ -620,8 +691,9 @@ function handleMoveIntent(
   const player = state.players[m.sender.userId];
   if (!player) return;
   if (tick - player.lastMoveTickN < MOVE_COOLDOWN_TICKS) return;
-  // KO'd players (sedative) can't move.
+  // KO'd or frozen players can't move.
   if ((state.koUntilTick?.[m.sender.userId] ?? 0) > tick) return;
+  if ((state.frozenUntilTick?.[m.sender.userId] ?? 0) > tick) return;
 
   let req: C2SMoveIntent;
   try {
@@ -977,35 +1049,20 @@ function handleInvUse(
         true,
       );
       broadcastFxSound(dispatcher, 'birdflap', player.x, player.y, 0.8);
-      // Apply the kill if we hit someone.
-      if (hitVictim) {
-        hitVictim.hp = 0;
-        hitVictim.isAlive = false;
-        hitVictim.isWatching = true;
-        const corpse: Corpse = {
-          corpseId: newCorpseId(),
-          victimUserId: hitVictim.userId,
-          victimUsername: hitVictim.username,
-          victimRealName: hitVictim.realName,
-          killerUserId: player.userId,
-          cause: 'Black Feather',
-          x: hitVictim.x,
-          y: hitVictim.y,
-          contents: hitVictim.inventory.items.slice(),
-          discovered: false,
-          discoveredByUserId: null,
-        };
-        hitVictim.inventory = {
-          items: [],
-          hotkeys: [null, null, null, null, null],
-          equipped: null,
-          weight: 0,
-          weightCap: hitVictim.inventory.weightCap,
-        };
-        state.corpses[corpse.corpseId] = corpse;
-        broadcastPlayerDied(dispatcher, hitVictim, player.userId, 'Black Feather');
-        broadcastCorpseUpdate(dispatcher, corpse);
-        broadcastFxSound(dispatcher, 'body_fall', hitVictim.x, hitVictim.y, 0.7);
+      // Grab + freeze instead of insta-kill (DM Black Feather.dm — the
+      // feather pulls the victim to the path's end and holds them frozen
+      // for 5 seconds. Allies can attack the feather's victim normally
+      // during that window.).
+      if (hitVictim && path.length > 0) {
+        const last = path[path.length - 1];
+        if (last) {
+          hitVictim.x = last.x;
+          hitVictim.y = last.y;
+          broadcastPlayerMoved(dispatcher, hitVictim, state.tickN, state);
+        }
+        state.frozenUntilTick ??= {};
+        state.frozenUntilTick[hitVictim.userId] = state.tickN + TICK_RATE * 5;
+        pushStatus(state, dispatcher, hitVictim);
       }
       consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
       return;
@@ -1773,9 +1830,151 @@ function handleDoorToggle(
   if (!tilemap.isDoor(req.x, req.y)) return;
   state.openDoors ??= {};
   const key = `${req.x},${req.y}`;
+  const locked = state.lockedDoors?.[key] === true;
+  if (locked) {
+    const hasCard = player.inventory.items.some(
+      (it) => it.itemId === 'key_card' || it.itemId === 'key_card_rare',
+    );
+    if (!hasCard) {
+      broadcastFxSound(dispatcher, 'door_locked', req.x, req.y, 0.6);
+      sendError(dispatcher, m.sender, 'door_locked', 'door is locked');
+      return;
+    }
+    if (state.lockedDoors) delete state.lockedDoors[key];
+  }
   const isOpen = state.openDoors[key] === true;
   state.openDoors[key] = !isOpen;
   const payload: S2CDoorState = { x: req.x, y: req.y, open: !isOpen };
+  dispatcher.broadcastMessage(OpCode.S2C_DOOR_STATE, JSON.stringify(payload), null, null, true);
+  broadcastFxSound(dispatcher, 'doormetal', req.x, req.y, 0.6);
+}
+
+/**
+ * Throw the equipped weapon. Walks tiles in facing dir up to weapon range
+ * (capped at 6); first alive player along the line takes weapon.damage.
+ * The weapon drops as a ground item where it landed.
+ */
+function handleThrow(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  tick: number,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  if ((state.koUntilTick?.[m.sender.userId] ?? 0) > tick) return;
+  if ((state.frozenUntilTick?.[m.sender.userId] ?? 0) > tick) return;
+  const equippedId = player.inventory.equipped;
+  if (!equippedId) {
+    sendError(dispatcher, m.sender, 'no_equip', 'nothing to throw');
+    return;
+  }
+  const inst = player.inventory.items.find((i) => i.instanceId === equippedId);
+  const def = inst ? ITEMS[inst.itemId] : undefined;
+  if (!inst || !def?.weapon) {
+    sendError(dispatcher, m.sender, 'not_throwable', 'this item cannot be thrown');
+    return;
+  }
+  const range = Math.min(6, Math.max(2, def.weapon.range * 2));
+  const delta = DIRECTION_DELTAS[player.facing];
+  const path: Array<{ x: number; y: number }> = [];
+  let hit: PlayerInGame | null = null;
+  if (delta) {
+    for (let step = 1; step <= range; step++) {
+      const tx = player.x + delta.dx * step;
+      const ty = player.y + delta.dy * step;
+      if (!tilemap.isPassable(tx, ty)) break;
+      path.push({ x: tx, y: ty });
+      for (const otherId in state.players) {
+        const o = state.players[otherId];
+        if (!o || o === player || !o.isAlive) continue;
+        if (o.x === tx && o.y === ty) {
+          hit = o;
+          break;
+        }
+      }
+      if (hit) break;
+    }
+  }
+  // Reuse the feather fx as a generic projectile path.
+  const fx: S2CFxFeather = { path };
+  dispatcher.broadcastMessage(OpCode.S2C_FX_FEATHER, JSON.stringify(fx), null, null, true);
+  // Remove the weapon from inventory.
+  const removed = removeItem(player.inventory, inst.instanceId);
+  if (removed) {
+    player.inventory = removed.inventory;
+    sendInvFull(dispatcher, state, m.sender);
+  }
+  // Drop where it landed (or at attacker's tile if no path).
+  const landing = path[path.length - 1] ?? { x: player.x, y: player.y };
+  const ground = fromInstance(inst, landing.x, landing.y);
+  state.groundItems[ground.groundItemId] = ground;
+  broadcastGroundItemDelta(dispatcher, { upserted: [toPublicGroundItem(ground)] });
+  if (hit) {
+    hit.hp = Math.max(0, hit.hp - def.weapon.damage);
+    broadcastPlayerHealth(dispatcher, hit);
+    const pres = state.presences[hit.userId];
+    if (pres) sendPlayerHP(dispatcher, pres, hit);
+    if (hit.hp === 0 && def.weapon.lethal) {
+      hit.isAlive = false;
+      hit.isWatching = true;
+      const corpse: Corpse = {
+        corpseId: newCorpseId(),
+        victimUserId: hit.userId,
+        victimUsername: hit.username,
+        victimRealName: hit.realName,
+        killerUserId: player.userId,
+        cause: `Thrown ${def.name}`,
+        x: hit.x,
+        y: hit.y,
+        contents: hit.inventory.items.slice(),
+        discovered: false,
+        discoveredByUserId: null,
+      };
+      hit.inventory = {
+        items: [],
+        hotkeys: [null, null, null, null, null],
+        equipped: null,
+        weight: 0,
+        weightCap: hit.inventory.weightCap,
+      };
+      state.corpses[corpse.corpseId] = corpse;
+      broadcastPlayerDied(dispatcher, hit, player.userId, `Thrown ${def.name}`);
+      broadcastCorpseUpdate(dispatcher, corpse);
+      broadcastFxSound(dispatcher, 'body_fall', hit.x, hit.y, 0.7);
+    }
+  }
+}
+
+function handleDoorCodeEntry(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player) return;
+  const req = parseBody<C2SDoorCodeEntry>(m.data);
+  if (!req) return;
+  if (Math.max(Math.abs(req.x - player.x), Math.abs(req.y - player.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'door not adjacent');
+    return;
+  }
+  const key = `${req.x},${req.y}`;
+  if (state.lockedDoors?.[key] !== true) {
+    sendError(dispatcher, m.sender, 'not_locked', 'door is not locked');
+    return;
+  }
+  if (req.code !== state.doorCode) {
+    sendError(dispatcher, m.sender, 'wrong_code', 'wrong code');
+    broadcastFxSound(dispatcher, 'door_locked', req.x, req.y, 0.6);
+    return;
+  }
+  delete state.lockedDoors[key];
+  state.openDoors ??= {};
+  state.openDoors[key] = true;
+  const payload: S2CDoorState = { x: req.x, y: req.y, open: true };
   dispatcher.broadcastMessage(OpCode.S2C_DOOR_STATE, JSON.stringify(payload), null, null, true);
   broadcastFxSound(dispatcher, 'doormetal', req.x, req.y, 0.6);
 }
@@ -1985,10 +2184,29 @@ function handleAttack(
   // We send the attacker's facing as a movement broadcast so other clients
   // turn the sprite to face the swing direction. Coordinates unchanged.
   broadcastPlayerMoved(dispatcher, attacker, tick, state);
+  // Visual swing fx to all viewers.
+  const swingPayload: S2CFxSwing = { userId: attacker.userId, facing: attacker.facing };
+  dispatcher.broadcastMessage(OpCode.S2C_FX_SWING, JSON.stringify(swingPayload), null, null, true);
 
   if (!result.hitUserId) return;
   const victim = state.players[result.hitUserId];
   if (!victim) return;
+
+  // KO non-lethal hits instead of leaving the victim conscious at 1 HP.
+  // resolveAttack already capped HP at 1 for non-lethal weapons; we
+  // augment with a 6-second knockout so taser/punch/etc. matter.
+  const weaponName = result.weaponName.toLowerCase();
+  if (!result.killed && !weaponName.includes('fists')) {
+    state.koUntilTick ??= {};
+    state.koUntilTick[victim.userId] = tick + TICK_RATE * 6;
+    pushStatus(state, dispatcher, victim);
+  }
+  // Bleeding: knife / billhook / axe / spear apply ~10s of bleed.
+  if (BLEEDING_WEAPONS.some((w) => weaponName.includes(w))) {
+    state.bleedUntilTick ??= {};
+    state.bleedUntilTick[victim.userId] = tick + TICK_RATE * 10;
+    pushStatus(state, dispatcher, victim);
+  }
 
   broadcastPlayerHealth(dispatcher, victim);
   // Self-only HP detail to the victim's HUD.
@@ -2201,6 +2419,26 @@ function drainScheduledEffects(
     const remaining: typeof state.scheduledDeaths = [];
     for (const s of state.scheduledDeaths) {
       if (tick < s.atTick) {
+        // DM-style: 5s before the kill, whisper the victim that their
+        // name's been written. Once-only via the warned flag.
+        if (!s.warned && s.warnAtTick !== undefined && tick >= s.warnAtTick) {
+          s.warned = true;
+          const victimP = state.players[s.victimUserId];
+          const pres = state.presences[s.victimUserId];
+          if (victimP && pres) {
+            const ann: S2CAnnouncement = {
+              kind: 'mode_event',
+              message: 'Your name was written. You have only seconds left.',
+            };
+            dispatcher.broadcastMessage(
+              OpCode.S2C_ANNOUNCEMENT,
+              JSON.stringify(ann),
+              [pres],
+              null,
+              true,
+            );
+          }
+        }
         remaining.push(s);
         continue;
       }
@@ -2398,6 +2636,30 @@ function bearing(dx: number, dy: number): S2CGhostSense['direction'] {
   return 'NE';
 }
 
+/** Push a self-only status snapshot so the HUD can update its icons. */
+function pushStatus(
+  state: PyrceMatchState,
+  dispatcher: nkruntime.MatchDispatcher,
+  player: PlayerInGame,
+): void {
+  const pres = state.presences[player.userId];
+  if (!pres) return;
+  const tick = state.tickN;
+  const payload: S2CPlayerStatus = {
+    ko: (state.koUntilTick?.[player.userId] ?? 0) > tick,
+    bleeding: (state.bleedUntilTick?.[player.userId] ?? 0) > tick,
+    frozen: (state.frozenUntilTick?.[player.userId] ?? 0) > tick,
+    infected: !!state.scheduledInfections?.some((s) => s.userId === player.userId),
+  };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_PLAYER_STATUS,
+    JSON.stringify(payload),
+    [pres],
+    null,
+    true,
+  );
+}
+
 function newCorpseId(): string {
   return `corpse-${Math.random().toString(36).slice(2, 12)}`;
 }
@@ -2405,6 +2667,26 @@ function newCorpseId(): string {
 function pickRandomSpawn(): { x: number; y: number } {
   const list = tilemap.playerSpawns;
   return list[Math.floor(Math.random() * list.length)] ?? { x: 36, y: 66 };
+}
+
+/**
+ * Seed the Detective's paper with the DM clue: "There's about an X% chance
+ * a teacher in this school is Kira." X is rand(1,40).
+ */
+function seedDetectiveClue(state: PyrceMatchState): void {
+  for (const uid in state.players) {
+    const p = state.players[uid];
+    if (!p || p.roleId !== 'detective') continue;
+    const sheet = p.inventory.items.find((i) => i.itemId === 'paper_sheet');
+    if (!sheet) continue;
+    const odds = 1 + Math.floor(Math.random() * 40);
+    const text = `There is about a ${odds}% chance a teacher in this school is Kira. Keep this note confidential.`;
+    const updated = { ...sheet, data: { ...(sheet.data ?? {}), text } };
+    p.inventory = {
+      ...p.inventory,
+      items: p.inventory.items.map((it) => (it.instanceId === sheet.instanceId ? updated : it)),
+    };
+  }
 }
 
 function relocateSpecialSpawns(state: PyrceMatchState): void {

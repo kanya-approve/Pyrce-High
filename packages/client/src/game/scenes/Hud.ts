@@ -42,6 +42,7 @@ export class Hud extends Scene {
   private hpFill!: Phaser.GameObjects.Rectangle;
   private hpText!: Phaser.GameObjects.Text;
   private staFill!: Phaser.GameObjects.Rectangle;
+  private statusText!: Phaser.GameObjects.Text;
 
   constructor() {
     super('Hud');
@@ -74,10 +75,28 @@ export class Hud extends Scene {
       .setDepth(1001)
       .setVisible(false);
 
+    this.statusText = this.add
+      .text(width / 2, 60, '', {
+        fontFamily: 'Arial Black',
+        fontSize: 12,
+        color: '#ff8866',
+        backgroundColor: '#000000aa',
+        padding: { left: 8, right: 8, top: 2, bottom: 2 },
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1001)
+      .setVisible(false);
+
     this.events.on('inv:refresh', () => this.renderInventory());
     this.events.on('inv:notify', (msg: string) => this.flash(msg));
     this.events.on('game:refresh', () => this.renderGame());
     this.events.on('hud:vitals', () => this.renderVitals());
+    this.events.on(
+      'hud:status',
+      (s: { ko: boolean; bleeding: boolean; frozen: boolean; infected: boolean }) =>
+        this.renderStatus(s),
+    );
 
     this.renderInventory();
     this.renderGame();
@@ -287,6 +306,24 @@ export class Hud extends Scene {
     this.notif.setText(msg).setVisible(true);
     this.notifTimer?.remove();
     this.notifTimer = this.time.delayedCall(2200, () => this.notif.setVisible(false));
+  }
+
+  private renderStatus(s: {
+    ko: boolean;
+    bleeding: boolean;
+    frozen: boolean;
+    infected: boolean;
+  }): void {
+    const tags: string[] = [];
+    if (s.ko) tags.push('KO');
+    if (s.frozen) tags.push('FROZEN');
+    if (s.bleeding) tags.push('BLEEDING');
+    if (s.infected) tags.push('INFECTED');
+    if (tags.length === 0) {
+      this.statusText.setVisible(false);
+      return;
+    }
+    this.statusText.setText(tags.join(' · ')).setVisible(true);
   }
 
   private renderInventory(): void {

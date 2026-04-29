@@ -57,6 +57,8 @@ export enum OpCode {
   C2S_PAPER_WRITE = 1907,
   C2S_PAPER_AIRPLANE = 1908,
   C2S_SUICIDE = 1909,
+  C2S_THROW = 1910,
+  C2S_DOOR_CODE_ENTRY = 1911,
 
   // ===== Server → Client =====
   S2C_HELLO = 2000,
@@ -112,4 +114,6 @@ export enum OpCode {
   S2C_PAPER_TEXT = 2907,
   S2C_PAPER_RECEIVED = 2908,
   S2C_DOOR_CODE = 2909,
+  S2C_PLAYER_STATUS = 2910,
+  S2C_FX_SWING = 2911,
 }

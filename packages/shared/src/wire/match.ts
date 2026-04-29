@@ -285,3 +285,24 @@ export interface S2CGhostSense {
   /** Approximate distance in tiles, rounded up to 5/15/30. */
   distance: number | null;
 }
+
+export type C2SThrow = {};
+
+export interface C2SDoorCodeEntry {
+  x: number;
+  y: number;
+  code: string;
+}
+
+/** Self-only status flags so the HUD can render icons. */
+export interface S2CPlayerStatus {
+  ko: boolean;
+  bleeding: boolean;
+  frozen: boolean;
+  infected: boolean;
+}
+
+export interface S2CFxSwing {
+  userId: string;
+  facing: import('../content/tilemap.js').Facing;
+}

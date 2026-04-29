@@ -96,6 +96,10 @@ const DEATH_NOTE: ModeScript = {
       killerUserId: user.userId,
       cause: 'Heart Attack',
       atTick: ctx.tick + DEATH_NOTE_KILL_DELAY_TICKS,
+      // DM Death_Note.dm warns the victim ~5s before death; flag drained
+      // by drainScheduledEffects when (atTick - 50) elapses.
+      warnAtTick: ctx.tick + DEATH_NOTE_KILL_DELAY_TICKS - 50,
+      warned: false,
     });
   },
 };
