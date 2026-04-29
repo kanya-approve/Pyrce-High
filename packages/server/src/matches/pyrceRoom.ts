@@ -51,6 +51,7 @@ import {
   type S2CCraftResult,
   type S2CDoorState,
   type S2CFxButterfly,
+  type S2CFxFeather,
   type S2CFxSmoke,
   type S2CFxSound,
   type S2CGameResult,
@@ -68,6 +69,7 @@ import {
   type S2CSearchDenied,
   type S2CSearchRequest,
   type S2CSelfRoleState,
+  type S2CStudentRoster,
   type S2CVoteEndGameTally,
   type S2CVoteKickTally,
   type S2CVoteModeTally,
@@ -814,15 +816,108 @@ function handleInvUse(
       sendInvDelta(dispatcher, state, m.sender, {});
       return;
     }
+    case 'computer': {
+      // School Computer (DM `School Computer.dm`): show the student roster
+      // — name + condition for every player. Originally split per classroom
+      // with hair colors + PDA numbers; we don't model those, so we just
+      // dump the alive list.
+      const entries: S2CStudentRoster['entries'] = [];
+      for (const uid in state.players) {
+        const p = state.players[uid];
+        if (!p) continue;
+        entries.push({
+          userId: p.userId,
+          username: p.username,
+          isAlive: p.isAlive,
+          condition: describeCondition(p),
+        });
+      }
+      const payload: S2CStudentRoster = { entries };
+      dispatcher.broadcastMessage(
+        OpCode.S2C_STUDENT_ROSTER,
+        JSON.stringify(payload),
+        [m.sender],
+        null,
+        true,
+      );
+      sendInvDelta(dispatcher, state, m.sender, {});
+      return;
+    }
+    case 'feather_shoot': {
+      // Black Feather (DM `Black Feather.dm` Dragon_Shoot): consume the
+      // feather, fire a projectile in the facing direction up to range
+      // FEATHER_RANGE; first alive player along the line takes a lethal hit.
+      const FEATHER_RANGE = 8;
+      const delta = DIRECTION_DELTAS[player.facing];
+      const path: Array<{ x: number; y: number }> = [];
+      let hitVictim: PlayerInGame | null = null;
+      if (delta) {
+        for (let step = 1; step <= FEATHER_RANGE; step++) {
+          const tx = player.x + delta.dx * step;
+          const ty = player.y + delta.dy * step;
+          if (!tilemap.isPassable(tx, ty)) break;
+          path.push({ x: tx, y: ty });
+          for (const otherId in state.players) {
+            const o = state.players[otherId];
+            if (!o || o === player || !o.isAlive) continue;
+            if (o.x === tx && o.y === ty) {
+              hitVictim = o;
+              break;
+            }
+          }
+          if (hitVictim) break;
+        }
+      }
+      // Broadcast the visual + sound regardless of hit.
+      const fxPayload: S2CFxFeather = { path };
+      dispatcher.broadcastMessage(
+        OpCode.S2C_FX_FEATHER,
+        JSON.stringify(fxPayload),
+        null,
+        null,
+        true,
+      );
+      broadcastFxSound(dispatcher, 'birdflap', player.x, player.y, 0.8);
+      // Apply the kill if we hit someone.
+      if (hitVictim) {
+        hitVictim.hp = 0;
+        hitVictim.isAlive = false;
+        hitVictim.isWatching = true;
+        const corpse: Corpse = {
+          corpseId: newCorpseId(),
+          victimUserId: hitVictim.userId,
+          victimUsername: hitVictim.username,
+          victimRealName: hitVictim.realName,
+          killerUserId: player.userId,
+          cause: 'Black Feather',
+          x: hitVictim.x,
+          y: hitVictim.y,
+          contents: hitVictim.inventory.items.slice(),
+          discovered: false,
+          discoveredByUserId: null,
+        };
+        hitVictim.inventory = {
+          items: [],
+          hotkeys: [null, null, null, null, null],
+          equipped: null,
+          weight: 0,
+          weightCap: hitVictim.inventory.weightCap,
+        };
+        state.corpses[corpse.corpseId] = corpse;
+        broadcastPlayerDied(dispatcher, hitVictim, player.userId, 'Black Feather');
+        broadcastCorpseUpdate(dispatcher, corpse);
+        broadcastFxSound(dispatcher, 'body_fall', hitVictim.x, hitVictim.y, 0.7);
+      }
+      consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
+      return;
+    }
     // Stub: notify the user but don't crash. These need full mode support
-    // (computer needs the student roster, paper-airplane needs target picker,
-    // etc.) — wired when modes ship.
+    // (paper-airplane needs target picker, PDA needs full roster) — wired
+    // when modes ship.
     case 'paper_write':
     case 'paper_airplane':
     case 'paper_view':
     case 'pda':
-    case 'computer':
-    case 'feather_shoot':
     case 'door_code_view': {
       sendError(
         dispatcher,

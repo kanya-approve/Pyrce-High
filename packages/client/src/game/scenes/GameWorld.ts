@@ -21,6 +21,7 @@ import {
   type S2CCraftResult,
   type S2CDoorState,
   type S2CFxButterfly,
+  type S2CFxFeather,
   type S2CFxSmoke,
   type S2CFxSound,
   type S2CGameResult,
@@ -37,6 +38,7 @@ import {
   type S2CSearchDenied,
   type S2CSearchRequest,
   type S2CSelfRoleState,
+  type S2CStudentRoster,
   type S2CVoteEndGameTally,
   type S2CVoteKickTally,
   type S2CWorldGroundItemDelta,
@@ -526,6 +528,69 @@ export class GameWorld extends Scene {
     void this.match.sendMatch(OpCode.C2S_VAMPIRE_DRAIN, { corpseId: target });
   }
 
+  /** School Computer roster modal: list of every player + condition. */
+  private openStudentRoster(r: S2CStudentRoster): void {
+    const parent = this.game.canvas.parentElement;
+    if (!parent) return;
+    const container = document.createElement('div');
+    container.style.cssText =
+      'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:340px;max-height:480px;overflow-y:auto;background:rgba(0,0,0,0.92);border:2px solid #88aaff;padding:14px;z-index:2300;color:#ffffff;font-family:Courier New,monospace;font-size:13px';
+    const header = document.createElement('div');
+    header.textContent = 'Student Roster (School Computer)';
+    header.style.cssText = 'font-weight:bold;margin-bottom:10px;color:#ffd866';
+    container.appendChild(header);
+    for (const e of r.entries) {
+      const row = document.createElement('div');
+      row.style.cssText =
+        'padding:4px 0;border-bottom:1px solid #224;color:' + (e.isAlive ? '#dddddd' : '#aa6666');
+      row.textContent = `${e.username.padEnd(14, ' ')} ${e.condition}`;
+      container.appendChild(row);
+    }
+    const close = document.createElement('button');
+    close.textContent = 'Close';
+    close.style.cssText =
+      'display:block;margin:10px auto 0;padding:6px 16px;cursor:pointer;background:#223344;color:#ffffff;border:1px solid #88aaff';
+    close.addEventListener('click', () => container.remove());
+    container.appendChild(close);
+    parent.appendChild(container);
+    setTimeout(() => container.parentElement && container.remove(), 30000);
+  }
+
+  /** Black Feather projectile: a sprite that traverses the path tile-by-tile. */
+  playFeather(path: Array<{ x: number; y: number }>): void {
+    if (path.length === 0) return;
+    const start = path[0];
+    if (!start) return;
+    const fx = this.add
+      .image(start.x * TILE + TILE / 2, start.y * TILE + TILE / 2, ATLAS_KEY)
+      .setDepth(900);
+    const atlasTex = this.textures.get(ATLAS_KEY);
+    const featherFrame = ITEM_SPRITES['black_feather'];
+    if (featherFrame && atlasTex.has(featherFrame)) fx.setFrame(featherFrame);
+    let i = 1;
+    const stepMs = 60;
+    const tickFn = () => {
+      if (i >= path.length) {
+        fx.destroy();
+        return;
+      }
+      const p = path[i];
+      if (!p) {
+        fx.destroy();
+        return;
+      }
+      this.tweens.add({
+        targets: fx,
+        x: p.x * TILE + TILE / 2,
+        y: p.y * TILE + TILE / 2,
+        duration: stepMs,
+        onComplete: tickFn,
+      });
+      i++;
+    };
+    tickFn();
+  }
+
   /** Killer's prompt to allow/deny a corpse search of a body they made. */
   private openSearchConsent(req: S2CSearchRequest): void {
     const parent = this.game.canvas.parentElement;
@@ -875,6 +940,18 @@ export class GameWorld extends Scene {
         if (s.vampireDrained !== undefined) {
           this.notifyHud(`Vampire: ${s.vampireDrained} drained`);
         }
+        break;
+      }
+      case OpCode.S2C_STUDENT_ROSTER: {
+        const r = parsePayload<S2CStudentRoster>(data);
+        if (!r) return;
+        this.openStudentRoster(r);
+        break;
+      }
+      case OpCode.S2C_FX_FEATHER: {
+        const f = parsePayload<S2CFxFeather>(data);
+        if (!f) return;
+        this.playFeather(f.path);
         break;
       }
       case OpCode.S2C_DOOR_STATE: {

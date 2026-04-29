@@ -226,3 +226,17 @@ export interface S2CSelfRoleState {
   /** Vampire: corpses drained this round. */
   vampireDrained?: number;
 }
+
+export interface S2CStudentRoster {
+  entries: Array<{
+    userId: string;
+    username: string;
+    isAlive: boolean;
+    condition: string;
+  }>;
+}
+
+export interface S2CFxFeather {
+  /** Tile path the feather travels along — start...impact. */
+  path: Array<{ x: number; y: number }>;
+}
