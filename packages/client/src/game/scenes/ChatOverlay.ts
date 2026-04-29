@@ -186,6 +186,11 @@ export class ChatOverlay extends Scene {
       this.blurInput();
       return;
     }
+    if (raw.toLowerCase() === '/suicide') {
+      void this.match.sendMatch(OpCode.C2S_SUICIDE, {});
+      this.blurInput();
+      return;
+    }
     const parsed = this.parseInput(raw);
     void this.match.sendMatch(OpCode.C2S_CHAT, parsed);
     this.blurInput();

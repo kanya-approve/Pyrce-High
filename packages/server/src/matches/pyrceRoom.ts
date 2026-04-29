@@ -496,6 +496,21 @@ function handleMessage(
     case OpCode.C2S_CONTAINER_PUT:
       handleContainerPut(state, m, dispatcher);
       break;
+    case OpCode.C2S_ROLE_ABILITY:
+      handleRoleAbility(state, m, tick, dispatcher);
+      break;
+    case OpCode.C2S_PULL_TOGGLE:
+      handlePullToggle(state, m, dispatcher);
+      break;
+    case OpCode.C2S_PAPER_WRITE:
+      handlePaperWrite(state, m, dispatcher);
+      break;
+    case OpCode.C2S_PAPER_AIRPLANE:
+      handlePaperAirplane(state, m, dispatcher);
+      break;
+    case OpCode.C2S_SUICIDE:
+      handleSuicide(state, m, dispatcher, logger);
+      break;
     default:
       break;
   }
@@ -571,6 +586,12 @@ function handleStartGame(
   relocateSpecialSpawns(state);
   state.clock = newClock(state.tickN);
   broadcastPhaseChange(dispatcher, state);
+  // Secret mode shows the secret announcement; everyone else shows the
+  // unwrapped mode's flavor.
+  broadcastAnnouncement(dispatcher, {
+    kind: 'mode_event',
+    message: openingFlavorFor(state.gameModeId ?? ''),
+  });
   for (const userId in state.presences) {
     const p = state.presences[userId];
     const player = state.players[userId];
@@ -599,6 +620,8 @@ function handleMoveIntent(
   const player = state.players[m.sender.userId];
   if (!player) return;
   if (tick - player.lastMoveTickN < MOVE_COOLDOWN_TICKS) return;
+  // KO'd players (sedative) can't move.
+  if ((state.koUntilTick?.[m.sender.userId] ?? 0) > tick) return;
 
   let req: C2SMoveIntent;
   try {
@@ -624,6 +647,12 @@ function handleMoveIntent(
   player.y = ny;
   player.lastMoveTickN = tick;
   broadcastPlayerMoved(dispatcher, player, tick, state);
+  // Footstep audio at low volume; range-attenuated by the client.
+  // Witch invisablewalk: silent steps so the disguise isn't blown by sound.
+  const invUntil = player.roleData?.['invisableUntilTick'] as number | undefined;
+  if (invUntil === undefined || tick >= invUntil) {
+    broadcastFxSound(dispatcher, 'footsteps', nx, ny, 0.25);
+  }
 }
 
 // ---------- inventory handlers ----------
@@ -808,8 +837,6 @@ function handleInvUse(
       return;
     }
     case 'syringe': {
-      // Inject self with whatever's filled. Only Cure does anything visible
-      // for v1 — others follow when the matching status effects land.
       const filled = inst.data?.['filled'];
       if (!filled) {
         sendError(dispatcher, m.sender, 'empty_syringe', 'fill the syringe first');
@@ -818,8 +845,31 @@ function handleInvUse(
       if (filled === 'Regenerative') {
         player.hp = Math.min(player.maxHp, player.hp + 30);
         sendPlayerHP(dispatcher, m.sender, player);
+      } else if (filled === 'Cure') {
+        // Reverses an active zombie infection. Drops the player's pending
+        // turn timer if one's queued.
+        const before = state.scheduledInfections?.length ?? 0;
+        if (state.scheduledInfections) {
+          state.scheduledInfections = state.scheduledInfections.filter(
+            (s) => s.userId !== player.userId,
+          );
+        }
+        if ((state.scheduledInfections?.length ?? 0) < before) {
+          broadcastAnnouncement(dispatcher, {
+            kind: 'mode_event',
+            message: `${player.username} cured the infection.`,
+          });
+        }
+      } else if (filled === 'Sedative') {
+        // Self-injecting a sedative just KOs you, which is dumb but matches
+        // DM (the verb didn't gate on adjacency for AOE-injecting). 10s KO.
+        state.koUntilTick ??= {};
+        state.koUntilTick[player.userId] = state.tickN + TICK_RATE * 10;
+        broadcastAnnouncement(dispatcher, {
+          kind: 'mode_event',
+          message: `${player.username} collapsed.`,
+        });
       }
-      // Cure / Sedative status effects are no-ops until the buff system lands.
       consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
       return;
     }
@@ -1241,6 +1291,170 @@ function handleDoppelgangerCopy(
   broadcastPlayerMoved(dispatcher, player, tick, state);
 }
 
+// ---------- role abilities + paper + corpse pull + suicide ----------
+
+function handleRoleAbility(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  tick: number,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SRoleAbility>(m.data);
+  if (!req) return;
+  const modeDef = getMode(effectiveModeId(state));
+  const script = modeDef?.scriptId ? MODE_SCRIPTS[modeDef.scriptId] : undefined;
+  if (!script?.onAbility) {
+    sendError(dispatcher, m.sender, 'no_ability', 'no abilities for this role');
+    return;
+  }
+  const ok = script.onAbility(state, player, req.ability, {
+    tick,
+    tickRate: TICK_RATE,
+    isPassable: (x, y) => tilemap.isPassable(x, y),
+  });
+  if (!ok) {
+    sendError(dispatcher, m.sender, 'not_ready', 'ability unavailable');
+    return;
+  }
+  broadcastPlayerMoved(dispatcher, player, tick, state);
+  sendStamina(dispatcher, m.sender, player);
+  if (req.ability === 'quickdash') {
+    broadcastFxSound(dispatcher, 'quickdash', player.x, player.y, 0.7);
+  } else if (req.ability === 'invisablewalk') {
+    broadcastFxSound(dispatcher, 'nanaya_disappear', player.x, player.y, 0.6);
+  }
+}
+
+function handlePullToggle(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SPullToggle>(m.data);
+  if (!req) return;
+  state.pullingCorpse ??= {};
+  if (req.corpseId === null) {
+    delete state.pullingCorpse[m.sender.userId];
+    sendInvDelta(dispatcher, state, m.sender, {});
+    return;
+  }
+  const corpse = state.corpses[req.corpseId];
+  if (!corpse) return;
+  if (Math.max(Math.abs(corpse.x - player.x), Math.abs(corpse.y - player.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'corpse not adjacent');
+    return;
+  }
+  state.pullingCorpse[m.sender.userId] = corpse.corpseId;
+  sendInvDelta(dispatcher, state, m.sender, {});
+}
+
+function handlePaperWrite(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SPaperWrite>(m.data);
+  if (!req) return;
+  const inst = findInstance(player.inventory, req.instanceId);
+  if (!inst) return;
+  const text = (req.text ?? '').slice(0, 500);
+  const updated = { ...inst, data: { ...(inst.data ?? {}), text } };
+  player.inventory = {
+    ...player.inventory,
+    items: player.inventory.items.map((it) => (it.instanceId === inst.instanceId ? updated : it)),
+  };
+  sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
+  broadcastFxSound(dispatcher, 'writing', player.x, player.y, 0.4);
+}
+
+function handlePaperAirplane(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const sender = state.players[m.sender.userId];
+  if (!sender || !sender.isAlive) return;
+  const req = parseBody<C2SPaperAirplane>(m.data);
+  if (!req) return;
+  const inst = findInstance(sender.inventory, req.instanceId);
+  if (!inst) return;
+  const target = state.players[req.targetUserId];
+  const targetPresence = target ? state.presences[target.userId] : null;
+  if (!target || !targetPresence) {
+    sendError(dispatcher, m.sender, 'no_target', 'target not in match');
+    return;
+  }
+  const text = (inst.data?.['text'] as string | undefined) ?? '';
+  const payload: S2CPaperReceived = { fromUsername: sender.username, text };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_PAPER_RECEIVED,
+    JSON.stringify(payload),
+    [targetPresence],
+    null,
+    true,
+  );
+  const removed = removeItem(sender.inventory, inst.instanceId);
+  if (removed) {
+    sender.inventory = removed.inventory;
+    sendInvFull(dispatcher, state, m.sender);
+  }
+  broadcastFxSound(dispatcher, 'birdflap', sender.x, sender.y, 0.5);
+}
+
+/** /suicide verb: instant self-kill so a trapped player can let the round end. */
+function handleSuicide(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+  logger: nkruntime.Logger,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  player.hp = 0;
+  player.isAlive = false;
+  player.isWatching = true;
+  const corpse: Corpse = {
+    corpseId: newCorpseId(),
+    victimUserId: player.userId,
+    victimUsername: player.username,
+    victimRealName: player.realName,
+    killerUserId: null,
+    cause: 'Suicide',
+    x: player.x,
+    y: player.y,
+    contents: player.inventory.items.slice(),
+    discovered: false,
+    discoveredByUserId: null,
+  };
+  player.inventory = {
+    items: [],
+    hotkeys: [null, null, null, null, null],
+    equipped: null,
+    weight: 0,
+    weightCap: player.inventory.weightCap,
+  };
+  state.corpses[corpse.corpseId] = corpse;
+  broadcastPlayerDied(dispatcher, player, null, 'Suicide');
+  broadcastCorpseUpdate(dispatcher, corpse);
+  broadcastFxSound(dispatcher, 'body_fall', player.x, player.y, 0.7);
+  broadcastAnnouncement(dispatcher, {
+    kind: 'system',
+    message: `${player.username} took their own life.`,
+  });
+  logger.info('suicide: %s', player.userId);
+}
+
 // ---------- voting ----------
 
 function handleVoteMode(
@@ -1286,6 +1500,32 @@ function broadcastModeTally(dispatcher: nkruntime.MatchDispatcher, state: PyrceM
 /** What mode is *actually* running this round (Secret mode unwraps to its pick). */
 function effectiveModeId(state: PyrceMatchState): string {
   return state.secretActualModeId ?? state.gameModeId ?? '';
+}
+
+/** Mode-specific opening announcement, mirroring DM `GameStarter.dm` flavor. */
+function openingFlavorFor(modeId: string): string {
+  switch (modeId) {
+    case 'normal':
+      return 'Warning: dead body located on the premises. Simple program analysis suggests murder. Facility locked down until authorities arrive.';
+    case 'doppelganger':
+      return 'Warning: dead body located. The face is missing. Whoever did this could be wearing it.';
+    case 'death_note_classic':
+      return 'Lockdown Malfunction: a teacher has died of stress. Simple program analysis is inconclusive.';
+    case 'witch':
+      return 'Warning: dead body located. The wounds make no anatomical sense.';
+    case 'zombie':
+      return 'Warning: dead body located. Bite and scratch marks. Containment recommended.';
+    case 'vampire':
+      return 'Warning: dead body located. The body has been drained of blood; marks on the neck.';
+    case 'ghost':
+      return 'Warning: dead body located. No suspect was witnessed entering or leaving the room.';
+    case 'extended':
+      return 'Lockdown initiated. Make it to dawn.';
+    case 'secret':
+      return 'Lockdown initiated. Something is wrong here.';
+    default:
+      return 'A new round begins.';
+  }
 }
 
 function handleVoteKick(
@@ -1732,6 +1972,7 @@ function handleAttack(
   if (state.phase !== MatchPhase.InGame) return;
   const attacker = state.players[m.sender.userId];
   if (!attacker || !attacker.isAlive) return;
+  if ((state.koUntilTick?.[m.sender.userId] ?? 0) > tick) return;
 
   const req = parseBody<C2SAttack>(m.data) ?? {};
   if (req.dir) attacker.facing = req.dir as Facing;

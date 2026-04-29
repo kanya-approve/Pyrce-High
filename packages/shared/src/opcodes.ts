@@ -56,6 +56,7 @@ export enum OpCode {
   C2S_PULL_TOGGLE = 1906,
   C2S_PAPER_WRITE = 1907,
   C2S_PAPER_AIRPLANE = 1908,
+  C2S_SUICIDE = 1909,
 
   // ===== Server → Client =====
   S2C_HELLO = 2000,
