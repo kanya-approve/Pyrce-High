@@ -308,3 +308,39 @@ export interface S2CFxSwing {
 }
 
 export type C2SJoinAsWatcher = {};
+
+/** Escape via the Steel Door. Requires holding a Key Card and adjacency to the door. */
+export type C2SEscapeDoor = {};
+
+/** Wash blood off self + equipped weapon. Requires standing on a bathroom-floor tile. */
+export type C2SWash = {};
+
+/** Toggle sprint (2x move speed, drains stamina). */
+export interface C2SSprintToggle {
+  on: boolean;
+}
+
+/** Plant an inventory item into an adjacent corpse or KO'd player. */
+export interface C2SPlantItem {
+  instanceId: import('../ids.js').ItemInstanceId;
+  target: { kind: 'corpse'; corpseId: string } | { kind: 'player'; userId: string };
+}
+
+/** Inject an adjacent player with a filled syringe in your inventory. */
+export interface C2SInjectTarget {
+  instanceId: import('../ids.js').ItemInstanceId;
+  targetUserId: string;
+}
+
+/** Push the player one tile in front of you. Non-damaging. */
+export type C2SShove = {};
+
+/**
+ * Send an anonymous PDA-to-PDA text message. Both sender and recipient
+ * must hold a PDA in their inventory. The message arrives as a chat-style
+ * S2CPaperReceived from "ANON".
+ */
+export interface C2SPdaSend {
+  targetUserId: string;
+  body: string;
+}

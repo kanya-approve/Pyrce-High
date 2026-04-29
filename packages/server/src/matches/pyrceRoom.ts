@@ -8,6 +8,7 @@ import {
   type C2SDoorToggle,
   type C2SDoppelgangerCopy,
   type C2SDragCorpse,
+  type C2SInjectTarget,
   type C2SInvCraft,
   type C2SInvDrop,
   type C2SInvEquip,
@@ -18,10 +19,13 @@ import {
   type C2SMoveIntent,
   type C2SPaperAirplane,
   type C2SPaperWrite,
+  type C2SPdaSend,
+  type C2SPlantItem,
   type C2SPullToggle,
   type C2SRoleAbility,
   type C2SSearchConsent,
   type C2SSearchCorpse,
+  type C2SSprintToggle,
   type C2STakeFromCorpse,
   type C2STypingBegin,
   type C2STypingEnd,
@@ -288,6 +292,39 @@ export function matchLoop(
     }
   }
 
+  // Sprint drain: every SPRINT_DRAIN_INTERVAL_TICKS, drain 1 stamina from
+  // each sprinting player. Auto-disable when stamina runs out.
+  if (state.sprinting && tick % SPRINT_DRAIN_INTERVAL_TICKS === 0) {
+    for (const uid in state.sprinting) {
+      const p = state.players[uid];
+      if (!p || !p.isAlive) {
+        delete state.sprinting[uid];
+        if (state.lastSprintDrainTick) delete state.lastSprintDrainTick[uid];
+        continue;
+      }
+      p.stamina = Math.max(0, p.stamina - 1);
+      const pres = state.presences[uid];
+      if (pres) sendStamina(dispatcher, pres, p);
+      if (p.stamina < SPRINT_MIN_STAMINA) {
+        delete state.sprinting[uid];
+        if (state.lastSprintDrainTick) delete state.lastSprintDrainTick[uid];
+      }
+    }
+  }
+
+  // Slow expiry: drop slowedUntilTick entries whose timers have elapsed,
+  // refreshing the player's status HUD when one ends.
+  if (state.slowedUntilTick) {
+    for (const uid in state.slowedUntilTick) {
+      const until = state.slowedUntilTick[uid] ?? 0;
+      if (tick >= until) {
+        const p = state.players[uid];
+        delete state.slowedUntilTick[uid];
+        if (p) pushStatus(state, dispatcher, p);
+      }
+    }
+  }
+
   // Bleed tick: every 10 ticks (1s) deal 2 HP to anyone with an active
   // bleed timer; expire when the timer's reached.
   if (state.bleedUntilTick && tick % 10 === 0) {
@@ -410,9 +447,7 @@ export function matchLoop(
   for (const c of discovered) {
     broadcastAnnouncement(dispatcher, {
       kind: 'body_discovered',
-      message: `Warning: dead body located! ${c.victimRealName} found by ${
-        state.players[c.discoveredByUserId ?? '']?.username ?? 'someone'
-      }.`,
+      message: bodyDiscoveryMessage(state, c),
     });
     broadcastCorpseUpdate(dispatcher, c);
   }
@@ -595,6 +630,27 @@ function handleMessage(
     case OpCode.C2S_SUICIDE:
       handleSuicide(state, m, dispatcher, logger);
       break;
+    case OpCode.C2S_ESCAPE_DOOR:
+      handleEscapeDoor(state, m, dispatcher);
+      break;
+    case OpCode.C2S_WASH:
+      handleWash(state, m, tick, dispatcher);
+      break;
+    case OpCode.C2S_SPRINT_TOGGLE:
+      handleSprintToggle(state, m, dispatcher);
+      break;
+    case OpCode.C2S_PLANT_ITEM:
+      handlePlantItem(state, m, dispatcher);
+      break;
+    case OpCode.C2S_INJECT_TARGET:
+      handleInjectTarget(state, m, dispatcher);
+      break;
+    case OpCode.C2S_SHOVE:
+      handleShove(state, m, tick, dispatcher);
+      break;
+    case OpCode.C2S_PDA_SEND:
+      handlePdaSend(state, m, dispatcher);
+      break;
     default:
       break;
   }
@@ -713,7 +769,13 @@ function handleMoveIntent(
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
   if (!player) return;
-  if (tick - player.lastMoveTickN < MOVE_COOLDOWN_TICKS) return;
+  const isSprinting = !!state.sprinting?.[m.sender.userId] && player.stamina >= SPRINT_MIN_STAMINA;
+  const isSlowed = (state.slowedUntilTick?.[m.sender.userId] ?? 0) > tick;
+  // Sprint halves the cooldown; sedative doubles it. Both stack.
+  let cooldown = MOVE_COOLDOWN_TICKS;
+  if (isSprinting) cooldown = Math.max(1, Math.floor(cooldown / 2));
+  if (isSlowed) cooldown = cooldown * 2;
+  if (tick - player.lastMoveTickN < cooldown) return;
   // KO'd or frozen players can't move.
   if ((state.koUntilTick?.[m.sender.userId] ?? 0) > tick) return;
   if ((state.frozenUntilTick?.[m.sender.userId] ?? 0) > tick) return;
@@ -956,14 +1018,16 @@ function handleInvUse(
           });
         }
       } else if (filled === 'Sedative') {
-        // Self-injecting a sedative just KOs you, which is dumb but matches
-        // DM (the verb didn't gate on adjacency for AOE-injecting). 10s KO.
-        state.koUntilTick ??= {};
-        state.koUntilTick[player.userId] = state.tickN + TICK_RATE * 10;
+        // DM: sedative slows movement (move_speed=9) for ~10s — it doesn't KO.
+        // Inject-other (C2S_INJECT_TARGET) is the real use case; self-injection
+        // is a niche pre-emptive nerf to your own movement.
+        state.slowedUntilTick ??= {};
+        state.slowedUntilTick[player.userId] = state.tickN + TICK_RATE * 10;
         broadcastAnnouncement(dispatcher, {
           kind: 'mode_event',
-          message: `${player.username} collapsed.`,
+          message: `${player.username} stumbles, drugged.`,
         });
+        pushStatus(state, dispatcher, player);
       }
       consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
       return;
@@ -1539,6 +1603,391 @@ function handleSuicide(
     message: `${player.username} took their own life.`,
   });
   logger.info('suicide: %s', player.userId);
+}
+
+/**
+ * Body-discovery announcement. 25% chance to swap the standard line for a
+ * "suspect description" variant (DM GameStarter.dm:677-696) — only fires
+ * when a Suspect role is actually alive in the match.
+ */
+function bodyDiscoveryMessage(state: PyrceMatchState, c: Corpse): string {
+  const finder = state.players[c.discoveredByUserId ?? '']?.username ?? 'someone';
+  const standard = `Warning: dead body located! ${c.victimRealName} found by ${finder}.`;
+  let suspect: PlayerInGame | null = null;
+  for (const uid in state.players) {
+    const p = state.players[uid];
+    if (p?.isAlive && p.roleId === 'suspect') {
+      suspect = p;
+      break;
+    }
+  }
+  if (!suspect) return standard;
+  if (Math.random() >= 0.25) return standard;
+  const descriptors = [
+    'a tall figure with dark hair',
+    'someone in a hooded jacket',
+    'a slight figure moving quickly',
+    'someone with bloodstained hands',
+    'a familiar-looking student',
+  ];
+  const desc = descriptors[Math.floor(Math.random() * descriptors.length)] ?? descriptors[0];
+  return `Warning: dead body located! Witnesses recall ${desc} leaving the area.`;
+}
+
+// ---------- escape door ----------
+
+/**
+ * Civilian escape via the Steel Door. Requires holding a Key Card and
+ * adjacency. Consumes the card, teleports the player to the EscapedSpawn,
+ * marks them as escaped (counts as a town survivor for win conditions),
+ * and broadcasts a global announcement. Killer escaping = killer auto-loss
+ * because the lastFactionStanding check now sees an escaped non-killer.
+ */
+function handleEscapeDoor(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  if (player.hasEscaped) return;
+  if (!tilemap.isAdjacentToEscapeDoor(player.x, player.y)) {
+    sendError(dispatcher, m.sender, 'no_escape_door', 'no escape door adjacent');
+    return;
+  }
+  const cardInst = player.inventory.items.find(
+    (it) => it.itemId === 'key_card' || it.itemId === 'key_card_rare',
+  );
+  if (!cardInst) {
+    sendError(dispatcher, m.sender, 'no_key_card', 'a Security Clearance Card is required');
+    return;
+  }
+  const removed = removeItem(player.inventory, cardInst.instanceId);
+  if (removed) player.inventory = removed.inventory;
+  player.hasEscaped = true;
+  player.isAlive = false;
+  player.isWatching = true;
+  const spawn = tilemap.spawnsById.get('EscapedSpawn');
+  if (spawn) {
+    player.x = spawn.x;
+    player.y = spawn.y;
+  }
+  broadcastPlayerMoved(dispatcher, player, state.tickN, state);
+  sendInvFull(dispatcher, state, m.sender);
+  broadcastFxSound(dispatcher, 'doormetal', spawn?.x ?? player.x, spawn?.y ?? player.y, 0.7);
+  broadcastAnnouncement(dispatcher, {
+    kind: 'system',
+    message: `${player.username} has escaped Pyrce High!`,
+  });
+}
+
+// ---------- wash ----------
+
+/**
+ * Wash blood off self + equipped weapon. Requires standing on a
+ * Bathroom_Floor tile (proxy for "next to a sink" — the tilemap converter
+ * doesn't capture sink objects so we use the floor type instead). Brief
+ * 3s lockout while washing.
+ */
+function handleWash(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  tick: number,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  if ((state.washingUntilTick?.[player.userId] ?? 0) > tick) return;
+  if (!tilemap.isBathroomFloor(player.x, player.y)) {
+    sendError(dispatcher, m.sender, 'no_sink', 'must be at a sink (bathroom)');
+    return;
+  }
+  state.washingUntilTick ??= {};
+  state.washingUntilTick[player.userId] = tick + TICK_RATE * 3;
+  let cleaned = false;
+  // Clear bloody from the equipped item (the weapon you used).
+  const equipId = player.inventory.equipped;
+  if (equipId) {
+    const idx = player.inventory.items.findIndex((it) => it.instanceId === equipId);
+    const inst = idx >= 0 ? player.inventory.items[idx] : undefined;
+    if (inst?.data?.['bloody']) {
+      const next = { ...inst.data };
+      delete next['bloody'];
+      const updated = { ...inst, data: next };
+      player.inventory = {
+        ...player.inventory,
+        items: player.inventory.items.map((it) => (it.instanceId === equipId ? updated : it)),
+      };
+      sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
+      // Re-broadcast moved so equippedItemBloody updates for onlookers.
+      broadcastPlayerMoved(dispatcher, player, tick, state);
+      cleaned = true;
+    }
+  }
+  broadcastFxSound(dispatcher, 'writing', player.x, player.y, 0.4);
+  if (!cleaned) {
+    // No bloody item — still ran the verb; tell them, no need to error.
+    sendError(dispatcher, m.sender, 'nothing_to_wash', 'nothing bloody to wash');
+  }
+}
+
+// ---------- sprint ----------
+
+const SPRINT_DRAIN_INTERVAL_TICKS = 5; // 0.5s per stamina point at 10Hz
+const SPRINT_MIN_STAMINA = 5;
+
+function handleSprintToggle(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SSprintToggle>(m.data);
+  if (!req) return;
+  state.sprinting ??= {};
+  state.lastSprintDrainTick ??= {};
+  if (req.on) {
+    if (player.stamina < SPRINT_MIN_STAMINA) {
+      sendError(dispatcher, m.sender, 'no_stamina', 'too tired to sprint');
+      return;
+    }
+    state.sprinting[player.userId] = true;
+    state.lastSprintDrainTick[player.userId] = state.tickN;
+  } else {
+    delete state.sprinting[player.userId];
+    delete state.lastSprintDrainTick[player.userId];
+  }
+}
+
+// ---------- plant on body ----------
+
+/**
+ * Plant an inventory item onto a target — adjacent corpse or adjacent
+ * KO'd / dead-but-not-corpsed player. The item moves out of the planter's
+ * inventory and into the target's contents. Core murder-mystery flavour:
+ * frame the bloody knife on someone else.
+ */
+function handlePlantItem(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SPlantItem>(m.data);
+  if (!req || !req.target) return;
+  const inst = player.inventory.items.find((it) => it.instanceId === req.instanceId);
+  if (!inst) return;
+  if (req.target.kind === 'corpse') {
+    const c = state.corpses[req.target.corpseId];
+    if (!c) return;
+    if (Math.max(Math.abs(c.x - player.x), Math.abs(c.y - player.y)) > 1) {
+      sendError(dispatcher, m.sender, 'too_far', 'corpse not adjacent');
+      return;
+    }
+    const removed = removeItem(player.inventory, inst.instanceId);
+    if (!removed) return;
+    player.inventory = removed.inventory;
+    c.contents = [...c.contents, removed.removed];
+    sendInvDelta(dispatcher, state, m.sender, {
+      removed: [inst.instanceId],
+      hotkeys: removed.inventory.hotkeys,
+      equipped: removed.inventory.equipped,
+      weight: removed.inventory.weight,
+    });
+    sendCorpseContents(dispatcher, m.sender, c);
+    return;
+  }
+  // target.kind === 'player' — only KO'd or downed targets
+  const target = state.players[req.target.userId];
+  if (!target) return;
+  if (Math.max(Math.abs(target.x - player.x), Math.abs(target.y - player.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'target not adjacent');
+    return;
+  }
+  const ko = (state.koUntilTick?.[target.userId] ?? 0) > state.tickN;
+  if (target.isAlive && !ko) {
+    sendError(dispatcher, m.sender, 'target_awake', 'target is conscious');
+    return;
+  }
+  const r = addItem(target.inventory, inst.itemId, inst.count, inst.data);
+  if (!r) {
+    sendError(dispatcher, m.sender, 'too_heavy', 'target inventory is full');
+    return;
+  }
+  target.inventory = r.inventory;
+  const removed2 = removeItem(player.inventory, inst.instanceId);
+  if (!removed2) return;
+  player.inventory = removed2.inventory;
+  sendInvDelta(dispatcher, state, m.sender, {
+    removed: [inst.instanceId],
+    hotkeys: removed2.inventory.hotkeys,
+    equipped: removed2.inventory.equipped,
+    weight: removed2.inventory.weight,
+  });
+  // Refresh the target's own inventory if they're still connected.
+  const targetPres = state.presences[target.userId];
+  if (targetPres) sendInvFull(dispatcher, state, targetPres);
+}
+
+// ---------- inject target (syringe on adjacent player) ----------
+
+function handleInjectTarget(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SInjectTarget>(m.data);
+  if (!req) return;
+  const target = state.players[req.targetUserId];
+  if (!target || !target.isAlive) return;
+  if (target.userId === player.userId) {
+    sendError(dispatcher, m.sender, 'self_target', 'use C2S_INV_USE for self-injection');
+    return;
+  }
+  if (Math.max(Math.abs(target.x - player.x), Math.abs(target.y - player.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'target not adjacent');
+    return;
+  }
+  const inst = player.inventory.items.find((it) => it.instanceId === req.instanceId);
+  if (!inst || inst.itemId !== 'syringe') return;
+  const filled = inst.data?.['filled'];
+  if (!filled) {
+    sendError(dispatcher, m.sender, 'empty_syringe', 'fill the syringe first');
+    return;
+  }
+  if (filled === 'Regenerative') {
+    target.hp = Math.min(target.maxHp, target.hp + 30);
+    broadcastPlayerHealth(dispatcher, target);
+    const tp = state.presences[target.userId];
+    if (tp) sendPlayerHP(dispatcher, tp, target);
+  } else if (filled === 'Cure') {
+    if (state.scheduledInfections) {
+      const before = state.scheduledInfections.length;
+      state.scheduledInfections = state.scheduledInfections.filter(
+        (s) => s.userId !== target.userId,
+      );
+      if (state.scheduledInfections.length < before) {
+        broadcastAnnouncement(dispatcher, {
+          kind: 'mode_event',
+          message: `${player.username} cured ${target.username}.`,
+        });
+      }
+    }
+  } else if (filled === 'Sedative') {
+    state.slowedUntilTick ??= {};
+    state.slowedUntilTick[target.userId] = state.tickN + TICK_RATE * 10;
+    broadcastAnnouncement(dispatcher, {
+      kind: 'mode_event',
+      message: `${target.username} stumbles, drugged.`,
+    });
+    pushStatus(state, dispatcher, target);
+  }
+  consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
+}
+
+// ---------- shove ----------
+
+const SHOVE_COOLDOWN_TICKS = TICK_RATE; // 1s
+
+/**
+ * Push the player one tile in front of you. Non-damaging crowd control.
+ * Won't push into walls or onto another occupied tile.
+ */
+function handleShove(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  tick: number,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  if ((state.lastShoveTick?.[player.userId] ?? 0) + SHOVE_COOLDOWN_TICKS > tick) return;
+  const delta = DIRECTION_DELTAS[player.facing];
+  if (!delta) return;
+  const fx = player.x + delta.dx;
+  const fy = player.y + delta.dy;
+  let target: PlayerInGame | null = null;
+  for (const uid in state.players) {
+    const p = state.players[uid];
+    if (p && p.isAlive && p.x === fx && p.y === fy) {
+      target = p;
+      break;
+    }
+  }
+  if (!target) {
+    sendError(dispatcher, m.sender, 'no_target', 'no one to shove');
+    return;
+  }
+  const tx = target.x + delta.dx;
+  const ty = target.y + delta.dy;
+  if (!tilemap.isPassable(tx, ty)) return;
+  for (const uid in state.players) {
+    const p = state.players[uid];
+    if (p && p.userId !== target.userId && p.x === tx && p.y === ty) return;
+  }
+  state.lastShoveTick ??= {};
+  state.lastShoveTick[player.userId] = tick;
+  target.x = tx;
+  target.y = ty;
+  broadcastPlayerMoved(dispatcher, target, tick, state);
+  broadcastFxSound(dispatcher, 'punch', target.x, target.y, 0.5);
+}
+
+// ---------- PDA SMS ----------
+
+const PDA_MAX_BODY = 200;
+
+/**
+ * Anonymous PDA-to-PDA messaging. Both sender and target must hold a PDA
+ * in their inventory. Recipient sees an "ANON" S2CPaperReceived — same
+ * delivery path as paper airplanes so the client doesn't need new wiring.
+ */
+function handlePdaSend(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const sender = state.players[m.sender.userId];
+  if (!sender || !sender.isAlive) return;
+  const req = parseBody<C2SPdaSend>(m.data);
+  if (!req || !req.targetUserId) return;
+  const body = String(req.body ?? '')
+    .trim()
+    .slice(0, PDA_MAX_BODY);
+  if (body.length === 0) return;
+  const senderHasPda = sender.inventory.items.some((it) => it.itemId === 'pda');
+  if (!senderHasPda) {
+    sendError(dispatcher, m.sender, 'no_pda', 'you need a PDA to send messages');
+    return;
+  }
+  const target = state.players[req.targetUserId];
+  if (!target || !target.isAlive) return;
+  const targetHasPda = target.inventory.items.some((it) => it.itemId === 'pda');
+  if (!targetHasPda) {
+    sendError(dispatcher, m.sender, 'target_no_pda', 'recipient is not carrying a PDA');
+    return;
+  }
+  const targetPres = state.presences[target.userId];
+  if (!targetPres) return;
+  const payload: S2CPaperReceived = { fromUsername: 'ANON', text: body };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_PAPER_RECEIVED,
+    JSON.stringify(payload),
+    [targetPres],
+    null,
+    true,
+  );
 }
 
 // ---------- voting ----------

@@ -234,7 +234,10 @@ function evaluateLastFactionStanding(
   const buckets: Record<string, PlayerInGame[]> = { town: [], killer: [], neutral: [] };
   for (const userId in state.players) {
     const p = state.players[userId];
-    if (!p || !p.isAlive) continue;
+    if (!p) continue;
+    // Escaped non-killer players count toward their faction even though
+    // they're flagged !isAlive — they've survived and should win the round.
+    if (!p.isAlive && !p.hasEscaped) continue;
     const a = ROLES[p.roleId].allegiance;
     buckets[a]?.push(p);
   }
@@ -273,7 +276,7 @@ function evaluateTimeUp(
   if (cond.winningAllegiance === 'survivors') {
     for (const userId in state.players) {
       const p = state.players[userId];
-      if (p?.isAlive) winners.push(p);
+      if (p && (p.isAlive || p.hasEscaped)) winners.push(p);
     }
   } else {
     for (const userId in state.players) {

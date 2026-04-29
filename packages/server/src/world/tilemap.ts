@@ -59,6 +59,25 @@ export class Tilemap {
     for (const d of this.raw.doors) if (d.x === x && d.y === y) return true;
     return false;
   }
+
+  /** True if (x,y) is the Escape_Door (or adjacent to it within Chebyshev 1). */
+  isAdjacentToEscapeDoor(x: number, y: number): boolean {
+    for (const d of this.raw.doors) {
+      if (d.kind !== '/obj/Escape_Door') continue;
+      if (Math.max(Math.abs(d.x - x), Math.abs(d.y - y)) <= 1) return true;
+    }
+    return false;
+  }
+
+  /** True if (x,y) is on a Bathroom_Floor tile (proxy for "near a sink"). */
+  isBathroomFloor(x: number, y: number): boolean {
+    if (!this.inBounds(x, y)) return false;
+    const row = this.raw.grid[y] ?? [];
+    const idx = row[x] ?? -1;
+    if (idx < 0) return false;
+    const tt = this.raw.tileTypes[idx];
+    return tt?.path === '/turf/School_Floors/Bathroom_Floor';
+  }
 }
 
 /**

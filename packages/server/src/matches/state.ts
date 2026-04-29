@@ -40,6 +40,8 @@ export interface PlayerInGame {
   isAlive: boolean;
   /** Watcher (spectator) mode after death. */
   isWatching: boolean;
+  /** True once the player has escaped via the Steel Door. They're effectively a non-killer survivor. */
+  hasEscaped?: boolean;
   /** True name for body-discovery messaging — leak-safe; only revealed on death. */
   realName: string;
   inventory: InventoryState;
@@ -180,6 +182,21 @@ export interface PyrceMatchState {
 
   /** Per-userId frozen timers: tick when the frozen state ends (feather). */
   frozenUntilTick?: { [userId: string]: number };
+
+  /** Per-userId sedative-slow timers: tick when the slow effect ends. */
+  slowedUntilTick?: { [userId: string]: number };
+
+  /** Per-userId wash cooldown: tick when wash completes (locks player briefly). */
+  washingUntilTick?: { [userId: string]: number };
+
+  /** Per-userId sprint state: true while sprint is toggled on. */
+  sprinting?: { [userId: string]: true };
+
+  /** Per-userId tick of last sprint stamina drain. */
+  lastSprintDrainTick?: { [userId: string]: number };
+
+  /** Per-userId tick of last shove (cooldown). */
+  lastShoveTick?: { [userId: string]: number };
 
   /** Doors locked by mode setup; key is `${x},${y}`. */
   lockedDoors?: { [coordKey: string]: true };

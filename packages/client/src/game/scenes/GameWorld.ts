@@ -126,12 +126,15 @@ export class GameWorld extends Scene {
     R: Phaser.Input.Keyboard.Key;
     Q: Phaser.Input.Keyboard.Key;
     P: Phaser.Input.Keyboard.Key;
+    H: Phaser.Input.Keyboard.Key;
+    X: Phaser.Input.Keyboard.Key;
     ONE: Phaser.Input.Keyboard.Key;
     TWO: Phaser.Input.Keyboard.Key;
     THREE: Phaser.Input.Keyboard.Key;
     FOUR: Phaser.Input.Keyboard.Key;
     FIVE: Phaser.Input.Keyboard.Key;
   };
+  private sprintActive = false;
   private lastInputAt = 0;
   private statusText?: Phaser.GameObjects.Text;
   private inventory: ClientInventory = newClientInventory();
@@ -195,7 +198,7 @@ export class GameWorld extends Scene {
       ) as typeof this.cursors;
       this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D', false) as typeof this.wasdKeys;
       this.actionKeys = this.input.keyboard.addKeys(
-        'E,F,G,C,I,V,K,B,R,Q,P,ONE,TWO,THREE,FOUR,FIVE',
+        'E,F,G,C,I,V,K,B,R,Q,P,H,X,ONE,TWO,THREE,FOUR,FIVE',
         false,
       ) as typeof this.actionKeys;
       const guard = (fn: () => void) => () => {
@@ -245,6 +248,14 @@ export class GameWorld extends Scene {
       this.actionKeys.P.on(
         'down',
         guard(() => this.handlePullCorpse()),
+      );
+      this.actionKeys.H.on(
+        'down',
+        guard(() => void this.match.sendMatch(OpCode.C2S_WASH, {})),
+      );
+      this.actionKeys.X.on(
+        'down',
+        guard(() => void this.match.sendMatch(OpCode.C2S_SHOVE, {})),
       );
       this.actionKeys.ONE.on(
         'down',
@@ -439,8 +450,15 @@ export class GameWorld extends Scene {
     }
 
     if (isTextInputFocused()) return; // chat / any text input owns the keys
+    // Sprint toggle: send on edge changes only.
+    const wantSprint = !!this.cursors?.shift?.isDown;
+    if (wantSprint !== this.sprintActive) {
+      this.sprintActive = wantSprint;
+      void this.match.sendMatch(OpCode.C2S_SPRINT_TOGGLE, { on: wantSprint });
+    }
     const now = performance.now();
-    if (now - this.lastInputAt < INPUT_THROTTLE_MS) return;
+    const throttle = this.sprintActive ? INPUT_THROTTLE_MS / 2 : INPUT_THROTTLE_MS;
+    if (now - this.lastInputAt < throttle) return;
     const dir = this.readInputDirection();
     if (!dir) return;
     this.lastInputAt = now;
@@ -459,9 +477,20 @@ export class GameWorld extends Scene {
         return;
       }
     }
+    // Escape door beats regular door — if adjacent to /obj/Escape_Door,
+    // try the escape verb (server checks Key Card + ends round).
+    for (const d of this.map.doors) {
+      if (d.kind !== '/obj/Escape_Door') continue;
+      const dist = Math.max(Math.abs(d.x - me.x), Math.abs(d.y - me.y));
+      if (dist <= 1) {
+        void this.match.sendMatch(OpCode.C2S_ESCAPE_DOOR, {});
+        return;
+      }
+    }
     // Open or close the nearest adjacent door.
     let bestDoor: { x: number; y: number; dist: number } | null = null;
     for (const d of this.map.doors) {
+      if (d.kind === '/obj/Escape_Door') continue;
       const dist = Math.max(Math.abs(d.x - me.x), Math.abs(d.y - me.y));
       if (dist > 1) continue;
       if (!bestDoor || dist < bestDoor.dist) bestDoor = { x: d.x, y: d.y, dist };
