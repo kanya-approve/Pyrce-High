@@ -13,17 +13,62 @@ controllers:
           - /bin/sh
           - -ecx
           - >-
+            DB_ADDR="${PG_USER}:${PG_PASS}@${PG_HOST}:${PG_PORT}/${PG_DB}";
             /nakama/nakama migrate up --database.address=$DB_ADDR
             && /nakama/nakama --config /nakama/data/local.yml
             --database.address=$DB_ADDR
             --runtime.path=/nakama/data/modules
             --runtime.js_entrypoint=index.js
+            --session.encryption_key=$SESSION_ENCRYPTION_KEY
+            --session.refresh_encryption_key=$SESSION_REFRESH_ENCRYPTION_KEY
+            --runtime.http_key=$RUNTIME_HTTP_KEY
+            --console.password=$CONSOLE_PASSWORD
         env:
-          DB_ADDR:
+          PG_HOST:
             valueFrom:
               secretKeyRef:
-                name: nakama-postgres
-                key: dsn
+                name: pyrce-pg-app
+                key: host
+          PG_PORT:
+            valueFrom:
+              secretKeyRef:
+                name: pyrce-pg-app
+                key: port
+          PG_USER:
+            valueFrom:
+              secretKeyRef:
+                name: pyrce-pg-app
+                key: username
+          PG_PASS:
+            valueFrom:
+              secretKeyRef:
+                name: pyrce-pg-app
+                key: password
+          PG_DB:
+            valueFrom:
+              secretKeyRef:
+                name: pyrce-pg-app
+                key: dbname
+          SESSION_ENCRYPTION_KEY:
+            valueFrom:
+              secretKeyRef:
+                name: pyrce-nakama-secrets
+                key: session_encryption_key
+          SESSION_REFRESH_ENCRYPTION_KEY:
+            valueFrom:
+              secretKeyRef:
+                name: pyrce-nakama-secrets
+                key: session_refresh_encryption_key
+          RUNTIME_HTTP_KEY:
+            valueFrom:
+              secretKeyRef:
+                name: pyrce-nakama-secrets
+                key: runtime_http_key
+          CONSOLE_PASSWORD:
+            valueFrom:
+              secretKeyRef:
+                name: pyrce-nakama-secrets
+                key: console_password
           AGONES_ALLOCATOR_URL:
             value: https://agones-allocator.agones-system.svc:443
           AGONES_ALLOCATOR_NAMESPACE:
@@ -104,3 +149,23 @@ defaultPodOptions:
       labelSelector:
         matchLabels:
           app.kubernetes.io/name: pyrce-nakama
+
+postgres:
+  enabled: true
+  name: pyrce-pg
+  database: nakama
+  owner: nakama
+  instances: 3
+  storage:
+    size: 20Gi
+    # storageClass: leave empty to use the cluster default; override per-env
+    storageClass: ''
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  monitoring:
+    enablePodMonitor: false

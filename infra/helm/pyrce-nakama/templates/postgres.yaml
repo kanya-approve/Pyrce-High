@@ -1,0 +1,39 @@
+{{- /*
+  CloudNativePG Cluster for Nakama. The CNPG operator must be installed
+  cluster-wide first — see `infra/helm/README.md`. CNPG provisions
+  Postgres pods, manages failover, runs continuous backups, and owns
+  the `<cluster-name>-app` Secret with the DSN we wire into Nakama.
+*/ -}}
+{{- with .Values.postgres -}}
+{{- if .enabled }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  instances: {{ .instances }}
+  storage:
+    size: {{ .storage.size }}
+    {{- with .storage.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
+  bootstrap:
+    initdb:
+      database: {{ .database }}
+      owner: {{ .owner }}
+  postgresql:
+    parameters:
+      max_connections: '200'
+      shared_buffers: 256MB
+  resources:
+    requests:
+      cpu: {{ .resources.requests.cpu }}
+      memory: {{ .resources.requests.memory }}
+    limits:
+      cpu: {{ .resources.limits.cpu }}
+      memory: {{ .resources.limits.memory }}
+  monitoring:
+    enablePodMonitor: {{ .monitoring.enablePodMonitor }}
+{{- end }}
+{{- end }}
