@@ -165,6 +165,33 @@ Numbers (P1/P2/P3) describe player-impact, not implementation effort.
 ### P3 — Pay Phone
 - Dead in DM (`"The phone is dead."`). Ignore.
 
+### P3 — Mystia Coin night-vision passive
+- DM `hud.dm:30-35`: each Mystia Coin held adds +2 to `see_in_dark`.
+- Currently coins are inventoried but apply no vision bonus.
+- Implementation: client `Lighting` scene reads inventory, scales the
+  visibility radius by `2 × coinCount`. ~1h, client-only.
+
+### P3 — Glow Stick held-light passive
+- DM `hud.dm:38-46`: each Glow Stick adds +2 to player's luminosity.
+- Implementation: client `Lighting` scene adds a small light disc at
+  the player's tile per stick held. ~1h, client-only.
+
+### P3 — Bloodsplat tiles around fresh corpses
+- DM `Weapons Attacks.dm:392-400`: corpses leak 1-3 `bloodsplat` objects
+  on adjacent tiles at kill time.
+- Server already broadcasts `S2C_BLOOD_DRIP` for moving bloody players;
+  add the same broadcast 1-3× around the corpse's tile on `result.killed`.
+  Trivial.
+
+### P3 — Camera / Monitor / Switch sprite placeholders
+- Server logic for these is wired; the client renders the underlying
+  tile only. Players see no visual cue that "this wall has a switch"
+  or "this is a security camera".
+- Implementation: in `GameWorld.create`, walk `tilemap.cameras / monitors
+  / lightSwitches / lights` and add a small icon sprite per entry. The
+  atlas already has `mh-icons/school/camera`-style frames available
+  from the DMI extract.
+
 ### P3 — Per-surface footstep sample variants
 - DM had per-floor samples (tatami vs concrete vs grass). Currently one
   `footsteps.wav`.
