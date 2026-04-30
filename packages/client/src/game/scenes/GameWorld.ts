@@ -17,6 +17,7 @@ import {
   type S2CAnnouncement,
   type S2CClockTick,
   type S2CContainerContents,
+  type S2CContainerMoved,
   type S2CCorpseSpawn,
   type S2CCraftResult,
   type S2CDoorCode,
@@ -128,6 +129,9 @@ export class GameWorld extends Scene {
     P: Phaser.Input.Keyboard.Key;
     H: Phaser.Input.Keyboard.Key;
     X: Phaser.Input.Keyboard.Key;
+    Y: Phaser.Input.Keyboard.Key;
+    O: Phaser.Input.Keyboard.Key;
+    M: Phaser.Input.Keyboard.Key;
     ONE: Phaser.Input.Keyboard.Key;
     TWO: Phaser.Input.Keyboard.Key;
     THREE: Phaser.Input.Keyboard.Key;
@@ -198,7 +202,7 @@ export class GameWorld extends Scene {
       ) as typeof this.cursors;
       this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D', false) as typeof this.wasdKeys;
       this.actionKeys = this.input.keyboard.addKeys(
-        'E,F,G,C,I,V,K,B,R,Q,P,H,X,ONE,TWO,THREE,FOUR,FIVE',
+        'E,F,G,C,I,V,K,B,R,Q,P,H,X,Y,O,M,ONE,TWO,THREE,FOUR,FIVE',
         false,
       ) as typeof this.actionKeys;
       const guard = (fn: () => void) => () => {
@@ -256,6 +260,18 @@ export class GameWorld extends Scene {
       this.actionKeys.X.on(
         'down',
         guard(() => void this.match.sendMatch(OpCode.C2S_SHOVE, {})),
+      );
+      this.actionKeys.Y.on(
+        'down',
+        guard(() => this.handlePushContainer()),
+      );
+      this.actionKeys.O.on(
+        'down',
+        guard(() => this.handlePushCorpse()),
+      );
+      this.actionKeys.M.on(
+        'down',
+        guard(() => this.handlePlantOnTarget()),
       );
       this.actionKeys.ONE.on(
         'down',
@@ -589,12 +605,31 @@ export class GameWorld extends Scene {
     header.textContent = 'Student Roster (School Computer)';
     header.style.cssText = 'font-weight:bold;margin-bottom:10px;color:#ffd866';
     container.appendChild(header);
+    // Group by classroom; entries without a classroom land in "Unassigned".
+    const groups = new Map<string, typeof r.entries>();
     for (const e of r.entries) {
-      const row = document.createElement('div');
-      row.style.cssText =
-        'padding:4px 0;border-bottom:1px solid #224;color:' + (e.isAlive ? '#dddddd' : '#aa6666');
-      row.textContent = `${e.username.padEnd(14, ' ')} ${e.condition}`;
-      container.appendChild(row);
+      const room = e.classroom ?? 'Unassigned';
+      let g = groups.get(room);
+      if (!g) {
+        g = [];
+        groups.set(room, g);
+      }
+      g.push(e);
+    }
+    const orderedRooms = [...groups.keys()].sort();
+    for (const room of orderedRooms) {
+      const roomHeader = document.createElement('div');
+      roomHeader.textContent = `── Class ${room} ──`;
+      roomHeader.style.cssText = 'margin-top:8px;color:#88aaff;font-weight:bold';
+      container.appendChild(roomHeader);
+      const list = groups.get(room) ?? [];
+      for (const e of list) {
+        const row = document.createElement('div');
+        row.style.cssText =
+          'padding:4px 0;border-bottom:1px solid #224;color:' + (e.isAlive ? '#dddddd' : '#aa6666');
+        row.textContent = `${e.username.padEnd(14, ' ')} ${e.condition}`;
+        container.appendChild(row);
+      }
     }
     const close = document.createElement('button');
     close.textContent = 'Close';
@@ -888,6 +923,75 @@ export class GameWorld extends Scene {
     return best?.id ?? null;
   }
 
+  private handlePushContainer(): void {
+    const me = this.players.get(this.match.userId)?.state;
+    if (!me) return;
+    let best: { x: number; y: number; dist: number } | null = null;
+    for (const c of this.containerHotspots) {
+      const dist = Math.max(Math.abs(c.x - me.x), Math.abs(c.y - me.y));
+      if (dist > 1) continue;
+      if (!best || dist < best.dist) best = { x: c.x, y: c.y, dist };
+    }
+    if (!best) {
+      this.notifyHud('No container to push');
+      return;
+    }
+    void this.match.sendMatch(OpCode.C2S_CONTAINER_PUSH, { x: best.x, y: best.y });
+  }
+
+  private handlePushCorpse(): void {
+    const me = this.players.get(this.match.userId)?.state;
+    if (!me) return;
+    const target = this.nearestAdjacentCorpse(me.x, me.y);
+    if (!target) {
+      this.notifyHud('No corpse to push');
+      return;
+    }
+    void this.match.sendMatch(OpCode.C2S_CORPSE_PUSH, { corpseId: target });
+  }
+
+  /**
+   * Plant an inventory item into an adjacent corpse or KO'd player. Picks
+   * the equipped item by default; opens a one-shot prompt if no equipped
+   * item is held.
+   */
+  private handlePlantOnTarget(): void {
+    const me = this.players.get(this.match.userId)?.state;
+    if (!me) return;
+    const corpseId = this.nearestAdjacentCorpse(me.x, me.y);
+    let target: { kind: 'corpse'; corpseId: string } | { kind: 'player'; userId: string } | null =
+      null;
+    if (corpseId) {
+      target = { kind: 'corpse', corpseId };
+    } else {
+      // KO'd / dead-but-not-corpsed adjacent player.
+      for (const sprite of this.players.values()) {
+        const p = sprite.state;
+        if (!p || p.userId === this.match.userId) continue;
+        const dist = Math.max(Math.abs(p.x - me.x), Math.abs(p.y - me.y));
+        if (dist > 1) continue;
+        if (p.isAlive) continue;
+        target = { kind: 'player', userId: p.userId };
+        break;
+      }
+    }
+    if (!target) {
+      this.notifyHud('No body to plant on');
+      return;
+    }
+    const equippedId = this.inventory.equipped;
+    const inst = equippedId ? this.inventory.items.find((i) => i.instanceId === equippedId) : null;
+    if (!inst) {
+      this.notifyHud('Equip something first to plant it');
+      return;
+    }
+    void this.match.sendMatch(OpCode.C2S_PLANT_ITEM, {
+      instanceId: inst.instanceId,
+      target,
+    });
+    this.notifyHud(`Planted ${ITEMS[inst.itemId]?.name ?? inst.itemId}`);
+  }
+
   private handleHotkey(slot: 1 | 2 | 3 | 4 | 5): void {
     const ref = this.inventory.hotkeys[slot - 1];
     if (!ref) return;
@@ -1052,6 +1156,30 @@ export class GameWorld extends Scene {
           });
         } else {
           this.notifyHud('container empty');
+        }
+        break;
+      }
+      case OpCode.S2C_CONTAINER_MOVED: {
+        const moved = parsePayload<S2CContainerMoved>(data);
+        if (!moved) return;
+        // Find the closest hotspot to the destination (within 1 tile of the
+        // old position) and re-stamp it at the new tile.
+        let best: { idx: number; d: number } | null = null;
+        for (let i = 0; i < this.containerHotspots.length; i++) {
+          const c = this.containerHotspots[i];
+          if (!c) continue;
+          const d = Math.max(Math.abs(c.x - moved.x), Math.abs(c.y - moved.y));
+          if (d > 1) continue;
+          if (!best || d < best.d) best = { idx: i, d };
+        }
+        if (best) {
+          const c = this.containerHotspots[best.idx];
+          if (c) {
+            c.x = moved.x;
+            c.y = moved.y;
+            c.id = `c@${moved.x},${moved.y}`;
+            c.rect.setPosition(moved.x * TILE + TILE / 2, moved.y * TILE + TILE / 2);
+          }
         }
         break;
       }

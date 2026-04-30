@@ -233,6 +233,8 @@ export interface S2CStudentRoster {
     username: string;
     isAlive: boolean;
     condition: string;
+    /** Assigned classroom at game start: 'A1' | 'A2' | 'B1' | … */
+    classroom?: string;
   }>;
 }
 
@@ -343,4 +345,22 @@ export type C2SShove = {};
 export interface C2SPdaSend {
   targetUserId: string;
   body: string;
+}
+
+/** Push the non-stationed container at (x,y) one tile in your facing direction. */
+export interface C2SContainerPush {
+  x: number;
+  y: number;
+}
+
+/** Container moved to new tile coords. */
+export interface S2CContainerMoved {
+  containerId: string;
+  x: number;
+  y: number;
+}
+
+/** Push a corpse one tile in your facing direction. */
+export interface C2SCorpsePush {
+  corpseId: string;
 }

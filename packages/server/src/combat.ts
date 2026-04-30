@@ -27,6 +27,8 @@ export interface AttackResult {
   killed: boolean;
   /** Corpse spawned on kill (server adds to state.corpses). */
   corpse?: Corpse;
+  /** Outcome flavor for fx/log/announce: 'miss' / 'crit' / 'glance' / 'normal'. */
+  outcome?: 'miss' | 'crit' | 'glance' | 'normal';
 }
 
 export function resolveAttack(
@@ -86,8 +88,35 @@ export function resolveAttack(
   if (!victim) return result;
 
   result.hitUserId = victim.userId;
-  result.damage = weapon.damage;
-  victim.hp = Math.max(0, victim.hp - weapon.damage);
+  // DM Weapons Attacks.dm: per-swing combat roll.
+  //   * 10% miss (rand 1-10 == 1) — only for awake, non-KO'd targets
+  //   * 25% face-to-face crit (+rand 1-3 dmg) when attacker's dir is the
+  //     reciprocal of victim's facing (head-on encounter)
+  //   * 25% behind-target glance (-rand 1-2 dmg) when victim is fleeing in
+  //     the attacker's facing dir (same-dir step in front)
+  const victimKO = (state.koUntilTick?.[victim.userId] ?? 0) > attackTick;
+  let dmg = weapon.damage;
+  let outcome: 'miss' | 'crit' | 'glance' | 'normal' = 'normal';
+  if (!victimKO) {
+    if (Math.floor(Math.random() * 10) === 0) {
+      dmg = 0;
+      outcome = 'miss';
+    } else if (isOpposite(dir, victim.facing) && Math.floor(Math.random() * 4) === 0) {
+      dmg += 1 + Math.floor(Math.random() * 3);
+      outcome = 'crit';
+    } else if (
+      victim.facing === dir &&
+      victim.x === attacker.x + delta.dx &&
+      victim.y === attacker.y + delta.dy &&
+      Math.floor(Math.random() * 4) === 0
+    ) {
+      dmg = Math.max(1, dmg - (1 + Math.floor(Math.random() * 2)));
+      outcome = 'glance';
+    }
+  }
+  result.outcome = outcome;
+  result.damage = dmg;
+  victim.hp = Math.max(0, victim.hp - dmg);
 
   if (victim.hp === 0) {
     if (weapon.lethal) {
@@ -181,4 +210,14 @@ export function checkBodyDiscoveries(state: PyrceMatchState): Corpse[] {
     }
   }
   return newlyDiscovered;
+}
+
+/** Two facings are opposite if they sit on the same axis pointing the other way. */
+function isOpposite(a: Facing, b: Facing): boolean {
+  return (
+    (a === 'N' && b === 'S') ||
+    (a === 'S' && b === 'N') ||
+    (a === 'E' && b === 'W') ||
+    (a === 'W' && b === 'E')
+  );
 }

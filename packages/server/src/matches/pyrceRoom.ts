@@ -2,8 +2,10 @@ import {
   type C2SAttack,
   type C2SChat,
   type C2SContainerLook,
+  type C2SContainerPush,
   type C2SContainerPut,
   type C2SContainerTake,
+  type C2SCorpsePush,
   type C2SDoorCodeEntry,
   type C2SDoorToggle,
   type C2SDoppelgangerCopy,
@@ -52,6 +54,7 @@ import {
   type S2CChatMessage,
   type S2CClockTick,
   type S2CContainerContents,
+  type S2CContainerMoved,
   type S2CCorpseContents,
   type S2CCorpseDespawn,
   type S2CCorpseSpawn,
@@ -651,6 +654,12 @@ function handleMessage(
     case OpCode.C2S_PDA_SEND:
       handlePdaSend(state, m, dispatcher);
       break;
+    case OpCode.C2S_CONTAINER_PUSH:
+      handleContainerPush(state, m, dispatcher);
+      break;
+    case OpCode.C2S_CORPSE_PUSH:
+      handleCorpsePush(state, m, dispatcher);
+      break;
     default:
       break;
   }
@@ -1075,10 +1084,9 @@ function handleInvUse(
       return;
     }
     case 'computer': {
-      // School Computer (DM `School Computer.dm`): show the student roster
-      // — name + condition for every player. Originally split per classroom
-      // with hair colors + PDA numbers; we don't model those, so we just
-      // dump the alive list.
+      // School Computer (DM `School Computer.dm`): show the student roster,
+      // grouped by homeroom so survivors can spot a missing classmate. We
+      // include classroom on each entry; the client formats per-classroom.
       const entries: S2CStudentRoster['entries'] = [];
       for (const uid in state.players) {
         const p = state.players[uid];
@@ -1088,6 +1096,7 @@ function handleInvUse(
           username: p.username,
           isAlive: p.isAlive,
           condition: describeCondition(p),
+          ...(p.classroom ? { classroom: p.classroom } : {}),
         });
       }
       const payload: S2CStudentRoster = { entries };
@@ -1216,6 +1225,7 @@ function handleInvUse(
           username: p.username,
           isAlive: p.isAlive,
           condition: describeCondition(p),
+          ...(p.classroom ? { classroom: p.classroom } : {}),
         });
       }
       const payload: S2CStudentRoster = { entries };
@@ -1990,6 +2000,101 @@ function handlePdaSend(
   );
 }
 
+// ---------- container push ----------
+
+/**
+ * Push a non-stationed container one tile in your facing direction.
+ * Stationed containers (Counter, Locker, Office_Desk, Refrigerator) are
+ * fixed by design — only `/obj/Containers/*` is pushable.
+ */
+function handleContainerPush(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SContainerPush>(m.data);
+  if (!req) return;
+  // Resolve container by coords (matches C2S_CONTAINER_LOOK addressing).
+  let c: import('../world/containers.js').ContainerInstance | undefined;
+  for (const cid in state.containers) {
+    const ct = state.containers[cid];
+    if (ct && ct.x === req.x && ct.y === req.y) {
+      c = ct;
+      break;
+    }
+  }
+  if (!c) return;
+  if (!c.kind.startsWith('/obj/Containers/')) {
+    sendError(dispatcher, m.sender, 'stationed', 'this container is fixed');
+    return;
+  }
+  if (Math.max(Math.abs(c.x - player.x), Math.abs(c.y - player.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'container not adjacent');
+    return;
+  }
+  const delta = DIRECTION_DELTAS[player.facing];
+  if (!delta) return;
+  const nx = c.x + delta.dx;
+  const ny = c.y + delta.dy;
+  if (!tilemap.isPassable(nx, ny)) return;
+  for (const cid in state.containers) {
+    const other = state.containers[cid];
+    if (other && other !== c && other.x === nx && other.y === ny) return;
+  }
+  for (const uid in state.players) {
+    const o = state.players[uid];
+    if (o && o.isAlive && o.x === nx && o.y === ny) return;
+  }
+  c.x = nx;
+  c.y = ny;
+  const payload: S2CContainerMoved = { containerId: c.containerId, x: nx, y: ny };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_CONTAINER_MOVED,
+    JSON.stringify(payload),
+    null,
+    null,
+    true,
+  );
+  broadcastFxSound(dispatcher, 'doormetal', nx, ny, 0.4);
+}
+
+// ---------- corpse push ----------
+
+/**
+ * Push a corpse one tile in your facing direction. Single-shot; distinct
+ * from C2S_PULL_TOGGLE which sets up continuous drag.
+ */
+function handleCorpsePush(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SCorpsePush>(m.data);
+  if (!req) return;
+  const c = state.corpses[req.corpseId];
+  if (!c) return;
+  if (Math.max(Math.abs(c.x - player.x), Math.abs(c.y - player.y)) > 1) {
+    sendError(dispatcher, m.sender, 'too_far', 'corpse not adjacent');
+    return;
+  }
+  const delta = DIRECTION_DELTAS[player.facing];
+  if (!delta) return;
+  const nx = c.x + delta.dx;
+  const ny = c.y + delta.dy;
+  if (!tilemap.isPassable(nx, ny)) return;
+  c.x = nx;
+  c.y = ny;
+  // Re-broadcast the corpse with its new position. Same op as spawn —
+  // clients merge by corpseId.
+  broadcastCorpseUpdate(dispatcher, c);
+}
+
 // ---------- voting ----------
 
 function handleVoteMode(
@@ -2728,6 +2833,13 @@ function handleAttack(
   const victim = state.players[result.hitUserId];
   if (!victim) return;
 
+  // Miss: 10% evade roll inside resolveAttack returns damage=0. Skip
+  // KO/bleed/health broadcast — the swing fx already played above.
+  if (result.outcome === 'miss') {
+    broadcastFxSound(dispatcher, 'punch', attacker.x, attacker.y, 0.3);
+    return;
+  }
+
   // KO non-lethal hits instead of leaving the victim conscious at 1 HP.
   // resolveAttack already capped HP at 1 for non-lethal weapons; we
   // augment with a 6-second knockout so taser/punch/etc. matter.
@@ -3242,6 +3354,37 @@ function relocateSpecialSpawns(state: PyrceMatchState): void {
   }
 }
 
+/**
+ * Spawn-id → classroom map. Mirrors GameStarter.dm:425-505: each numbered
+ * spawn point belongs to a homeroom (A1, A2, B1, B2, C1, C2, D1, D2). The
+ * School Computer / PDA roster groups players by classroom so survivors
+ * can deduce who's missing room-by-room.
+ */
+const SPAWN_TO_CLASSROOM: { readonly [spawnId: string]: string } = {
+  One: 'A1',
+  Two: 'A1',
+  Three: 'B1',
+  Four: 'B1',
+  Five: 'B2',
+  Six: 'B2',
+  Seven: 'C1',
+  Eight: 'C1',
+  Nine: 'C2',
+  Ten: 'C2',
+  Eleven: 'D1',
+  Twelve: 'D1',
+  Thirteen: 'D2',
+  Fourteen: 'D2',
+  Fifteen: 'A2',
+  Sixteen: 'A2',
+  Seventeen: 'A2',
+  Eighteen: 'A1',
+  Nineteen: 'A2',
+  Twenty: 'B1',
+  Twentyone: 'B2',
+  Twentytwo: 'C1',
+};
+
 function assignSpawns(state: PyrceMatchState): void {
   const spawns = tilemap.playerSpawns;
   let i = 0;
@@ -3250,7 +3393,10 @@ function assignSpawns(state: PyrceMatchState): void {
     if (!presence) continue;
     const sp = spawns[i % spawns.length];
     if (!sp) continue;
-    state.players[userId] = newPlayerInGame(userId, presence.username, sp.x, sp.y);
+    const player = newPlayerInGame(userId, presence.username, sp.x, sp.y);
+    const room = SPAWN_TO_CLASSROOM[sp.id];
+    if (room) player.classroom = room;
+    state.players[userId] = player;
     i++;
   }
 }

@@ -42,6 +42,8 @@ export interface PlayerInGame {
   isWatching: boolean;
   /** True once the player has escaped via the Steel Door. They're effectively a non-killer survivor. */
   hasEscaped?: boolean;
+  /** Classroom assigned at game start ('A1', 'A2', 'B1', ...). Null until the player is placed. */
+  classroom?: string;
   /** True name for body-discovery messaging — leak-safe; only revealed on death. */
   realName: string;
   inventory: InventoryState;
