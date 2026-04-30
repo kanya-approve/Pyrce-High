@@ -197,6 +197,7 @@ export class GameWorld extends Scene {
     this.renderContainerHotspots();
     this.renderDoors();
     this.renderSpawnMarkers();
+    this.renderInfrastructure();
     for (const p of initialPlayers) this.spawnPlayer(p);
     const me = this.players.get(this.match.userId);
     if (me) this.cameras.main.startFollow(me.rect, true, 0.1, 0.1);
@@ -708,6 +709,63 @@ export class GameWorld extends Scene {
       this.add
         .circle(sp.x * TILE + TILE / 2, sp.y * TILE + TILE / 2, 3, 0xffd866, 0.35)
         .setDepth(0.4);
+    }
+  }
+
+  /**
+   * Drop on-tile sprites for cameras / monitors / light switches / lights so
+   * players can see where they are. Each falls back to a labelled rectangle
+   * if the atlas frame isn't loaded.
+   */
+  private switchSprites = new Map<string, Phaser.GameObjects.Image>();
+  private renderInfrastructure(): void {
+    const atlas = this.textures.get(ATLAS_KEY);
+    const place = (
+      x: number,
+      y: number,
+      frame: string,
+      fallbackColor: number,
+      label: string,
+    ): Phaser.GameObjects.Image | null => {
+      const cx = x * TILE + TILE / 2;
+      const cy = y * TILE + TILE / 2;
+      if (atlas.has(frame)) {
+        return this.add.image(cx, cy, ATLAS_KEY, frame).setDepth(1).setAlpha(0.95);
+      }
+      this.add
+        .rectangle(cx, cy, TILE - 8, TILE - 8, fallbackColor, 0.55)
+        .setStrokeStyle(1, fallbackColor)
+        .setDepth(1);
+      this.add
+        .text(cx, cy, label, {
+          fontFamily: 'Arial',
+          fontSize: 8,
+          color: '#ffffff',
+        })
+        .setOrigin(0.5)
+        .setDepth(1.01);
+      return null;
+    };
+    for (const c of this.map.cameras ?? []) {
+      place(c.x, c.y, 'mh-icons/placeables/camera/S/0', 0x4488cc, 'CAM');
+    }
+    for (const m of this.map.monitors ?? []) {
+      place(m.x, m.y, 'mh-icons/placeables/monitor/S/0', 0x224488, 'MON');
+    }
+    for (const sw of this.map.lightSwitches ?? []) {
+      const img = place(sw.x, sw.y, 'mh-icons/school/switch_on/S/0', 0xddcc44, 'SW');
+      if (img) this.switchSprites.set(sw.tag, img);
+    }
+  }
+
+  /** Swap each switch sprite based on whether its tag is in the off-set. */
+  private refreshSwitchSprites(): void {
+    const atlas = this.textures.get(ATLAS_KEY);
+    const onFrame = 'mh-icons/school/switch_on/S/0';
+    const offFrame = 'mh-icons/school/switch_off/S/0';
+    for (const [tag, img] of this.switchSprites) {
+      const target = this.lightsOff.has(tag) ? offFrame : onFrame;
+      if (atlas.has(target)) img.setFrame(target);
     }
   }
 
@@ -1254,6 +1312,7 @@ export class GameWorld extends Scene {
         if (!l) return;
         this.lightsOff = new Set(l.offTags);
         this.refreshLightOverlays();
+        this.refreshSwitchSprites();
         break;
       }
       case OpCode.S2C_BLOOD_DRIP: {

@@ -183,15 +183,6 @@ Numbers (P1/P2/P3) describe player-impact, not implementation effort.
   add the same broadcast 1-3× around the corpse's tile on `result.killed`.
   Trivial.
 
-### P3 — Camera / Monitor / Switch sprite placeholders
-- Server logic for these is wired; the client renders the underlying
-  tile only. Players see no visual cue that "this wall has a switch"
-  or "this is a security camera".
-- Implementation: in `GameWorld.create`, walk `tilemap.cameras / monitors
-  / lightSwitches / lights` and add a small icon sprite per entry. The
-  atlas already has `mh-icons/school/camera`-style frames available
-  from the DMI extract.
-
 ### P3 — Per-surface footstep sample variants
 - DM had per-floor samples (tatami vs concrete vs grass). Currently one
   `footsteps.wav`.
