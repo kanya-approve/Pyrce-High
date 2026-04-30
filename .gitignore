@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+*.tsbuildinfo
 
 # Helm subchart tarballs — pulled by `helm dependency update`. Chart.lock
 # is committed so dep versions stay reproducible.
