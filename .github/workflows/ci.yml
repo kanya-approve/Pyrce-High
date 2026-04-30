@@ -71,8 +71,3 @@ jobs:
           helm dependency update infra/helm/pyrce-nakama
           helm lint infra/helm/pyrce-nakama
           helm template pyrce-nakama infra/helm/pyrce-nakama > /dev/null
-      - name: Lint pyrce-client
-        run: |
-          helm dependency update infra/helm/pyrce-client
-          helm lint infra/helm/pyrce-client
-          helm template pyrce-client infra/helm/pyrce-client > /dev/null

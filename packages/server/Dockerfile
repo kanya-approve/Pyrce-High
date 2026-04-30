@@ -3,7 +3,12 @@
 # in a multi-stage build.
 #
 #   docker build -t pyrce-nakama -f packages/server/Dockerfile .
-FROM node:22-alpine AS builder
+#
+# The output is pure JS (Goja-loaded by Nakama), so the builder stage
+# runs on the build host's native arch (`$BUILDPLATFORM`) — no QEMU
+# emulation cost. The final stage uses the requested `$TARGETPLATFORM`,
+# which for our matrix is amd64 + arm64.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 WORKDIR /repo
 RUN corepack enable
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./

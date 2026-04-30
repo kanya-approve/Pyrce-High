@@ -35,13 +35,12 @@ infra/
   docker-compose.prod.yml        prod compose target
   nakama/                        nakama config
   helm/pyrce-nakama/             Helm chart (Nakama Deployment), backed by bjw-s common
-  helm/pyrce-client/             Helm chart (nginx + Vite bundle), backed by bjw-s common
   k8s/agones/                    Agones Fleet + FleetAutoscaler manifests for the
                                  realtime game-server tier (CRD-based, not Helm)
 
 .github/workflows/
   ci.yml                         lint + typecheck + build + helm lint
-  images.yml                     build + push pyrce-nakama / pyrce-client / pyrce-game-server
+  images.yml                     build + push pyrce-nakama / pyrce-game-server
                                  images to ghcr.io/kanya-approve
 
 TODO.md                          deferred / declined work, with re-implementation hints
@@ -53,8 +52,8 @@ Three deploy tiers:
 
 ```
                       ┌──────────────────────────────┐
-                      │ pyrce-client (nginx + Vite)  │  Helm chart
-                      │ Phaser 4 browser app         │
+                      │ Vite-built static bundle     │  CDN (S3+CloudFront, Cloudflare
+                      │ (Phaser 4 browser app)       │  Pages, etc) — no container
                       └─────────────┬────────────────┘
                                     │ WSS
                       ┌─────────────▼────────────────┐

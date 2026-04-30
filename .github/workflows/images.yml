@@ -1,8 +1,9 @@
 name: Images
 
-# Build and push the Nakama, game-server, and client images to GHCR on
-# every push to main and on tag pushes (`v*`). PR builds load locally
-# but skip the push so forks don't fail on auth.
+# Build and push the Nakama and game-server images to GHCR on every
+# push to main and on tag pushes (`v*`). The client is a static Vite
+# bundle and ships to a CDN, not a container — see `client-deploy.yml`.
+# PR builds run but skip the push so forks don't fail on auth.
 on:
   push:
     branches: [main]
@@ -36,13 +37,11 @@ jobs:
           - name: game-server
             context: .
             dockerfile: packages/game-server/Dockerfile
-          - name: client
-            context: .
-            dockerfile: packages/client/Dockerfile
 
     steps:
       - uses: actions/checkout@v6
 
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -79,4 +78,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
-          platforms: linux/amd64
+          # Multi-arch: amd64 for the typical x86 cluster, arm64 for Graviton /
+          # Ampere / Apple Silicon dev machines pulling for local testing.
+          platforms: linux/amd64,linux/arm64
