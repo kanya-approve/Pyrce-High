@@ -12,10 +12,6 @@ dist
 dist-ssr
 *.local
 
-# Local DM-source reference checkout (not part of the rewrite — see git
-# commit 4a330e8 for the canonical history).
-BYOND_CODE/
-
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

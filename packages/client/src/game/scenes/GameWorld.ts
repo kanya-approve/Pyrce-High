@@ -1714,8 +1714,8 @@ export class GameWorld extends Scene {
         frameRate: 10,
         repeat: 0,
       });
-      // One walk anim per (hair, dir). Skip hairs whose frames aren't packed
-      // in the atlas (some male option names don't exist as DMIs).
+      // One walk anim per (hair, dir). Skip hairs whose frames aren't in
+      // the atlas (sparse coverage of some hair option names).
       for (const hair of HAIR_OPTIONS_MALE) {
         const frames = hairWalkFrames(hair, dir).filter((k) => atlasTex.has(k));
         if (frames.length === 0) continue;
@@ -1780,9 +1780,8 @@ export class GameWorld extends Scene {
   }
 
   /**
-   * Play the smokey.dmi puff anim at world coords. Hooked to the smoke_bomb
-   * use op when the server starts broadcasting it; for now exposed for any
-   * client-side trigger.
+   * Play the smoke puff animation at world coords. Hooked to the smoke_bomb
+   * use op; also exposed for any client-side trigger.
    */
   playSmoke(worldX: number, worldY: number): void {
     if (!this.anims.exists('fx.smoke')) {

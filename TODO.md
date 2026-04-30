@@ -12,17 +12,6 @@ Numbers (P1/P2/P3) describe player-impact, not implementation effort.
 
 ## Maps & content
 
-### P2 — `Default2.dmm` second map
-- DM has a second 200×200 map (`Default2.dmm`) used as an alternate venue.
-- v1 ships `Default.dmm` only via `tools/dm-to-tiled/`.
-- To add: re-run the converter on `Default2.dmm`, emit a second
-  `packages/shared/src/content/tilemap/default2.json`, plumb a map id
-  through `MatchState.mapId`, swap the `Tilemap` singleton in
-  `packages/server/src/world/tilemap.ts` for a per-match instance.
-  Lobby/match RPCs gain a `mapId` param. Likely 1–2 days.
-- Reason deferred: single-map keeps the converter, lighting, spawn-id
-  enums, and atlas pipeline simple for v1.
-
 ### P3 — Anime-name generator (`Player Names.dm`)
 - DM rolls a fake name (Tohno, Furude, …) per player for in-round
   "real-name" reveals on death.

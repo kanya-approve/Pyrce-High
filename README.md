@@ -4,18 +4,19 @@ A web-first TypeScript rewrite of the BYOND/Dream Maker murder-mystery game
 *Pyrce High*. Players join a lobby, get assigned hidden roles, hunt or hide,
 and the round ends at sunrise.
 
-- **Client:** Phaser 4 + Vite + TypeScript
-- **Server:** [Nakama](https://heroiclabs.com/nakama) with TypeScript runtime
-  modules bundled by Rollup
-- **Shared package:** typed opcodes, wire-protocol payloads, content
-  registries (items, roles, modes, tilemap)
-- **Deploy:** Kubernetes-ready Helm chart (planned), Vite-built static client
-  for any CDN
+| Layer | Stack |
+|---|---|
+| Client | Phaser 4 + Vite + TypeScript |
+| Server | [Nakama](https://heroiclabs.com/nakama) TypeScript runtime modules, Rollup-bundled to a single `dist/index.js` |
+| Shared | Typed opcodes, wire-protocol payloads, content registries |
+| Tooling | pnpm workspaces · Biome (lint+format) · TypeScript 6 |
+| Local dev | docker-compose (Postgres + Nakama) |
 
 The original DM source lives in git history at commit `4a330e8` for any
 reference needs (`git show 4a330e8:"<file>"`). It is no longer in the working
 tree — the rewrite has full coverage of every gameplay verb and object that
-isn't explicitly out of v1 scope (see [`TODO.md`](./TODO.md)).
+isn't explicitly out of v1 scope. Deferred polish is logged in
+[`TODO.md`](./TODO.md).
 
 ## Layout
 
@@ -26,16 +27,12 @@ packages/
   client/   @pyrce/client   Phaser 4 + Vite browser app
 
 tools/
-  dm-to-tiled/              .dmm map → JSON tilemap converter
-  dmi-extract/              .dmi sprite atlas → PNG + frame manifest
   smoke/                    end-to-end smoke tests (m4–m7, browser puppeteer)
 
 infra/
   docker-compose.yml        local Postgres + Nakama
   docker-compose.prod.yml   prod compose target
   nakama/                   nakama config
-
-assets/dmi-source/          sprite source (input to tools/dmi-extract)
 
 TODO.md                     deferred / declined work, with re-implementation hints
 ```
@@ -136,35 +133,74 @@ can coexist (Lobby + ChatOverlay, GameWorld + ChatOverlay, etc).
 - `opcodes.ts` — single source of truth for the wire protocol
 - `wire/match.ts` + `wire/inventory.ts` — payload types for each opcode
 - `content/items.ts`, `roles.ts`, `modes.ts` — content registries
-- `content/tilemap/default.json` — converted DM map (output of
-  `tools/dm-to-tiled/`)
+- `content/tilemap/default.json` — game tilemap (grid + objects)
+
+## Default keybinds
+
+| Key | Action |
+|---|---|
+| `WASD` / arrows | move |
+| `Shift` (held) | sprint (drains stamina) |
+| `T` / `Enter` | open chat |
+| `E` | interact (door / vending / container / escape door) |
+| `F` | attack in facing direction |
+| `G` | drop equipped |
+| `1` – `5` | hotkey equip / use |
+| `I` | open inventory |
+| `C` | craft (spear) |
+| `H` | wash (at bathroom sink) |
+| `X` | shove adjacent player |
+| `Y` | push adjacent container |
+| `O` | push adjacent corpse |
+| `M` | plant equipped item on adjacent corpse / KO'd |
+| `P` | drag adjacent corpse |
+| `B` | doppelganger copy |
+| `R` | vampire drain |
+| `Q` | role ability (witch invisible-walk, vampire dash, …) |
+| `V` | vote end game |
+| `K` | open vote-kick picker |
+| `L` | toggle adjacent light switch |
+| `J` | view security tapes (at monitor) |
+| `N` | cycle to next security camera (at monitor) |
+| `Z` | delete tapes (killer-only, at monitor) |
+| Right-click player | view profile |
+
+`/suicide`, `/shini`, `/ghost`, `/whisper`, `/shout`, `/emote`, `/ooc`, `/dead`
+work as chat-prefixes inside the chat box.
 
 ## Status
 
-The v1 milestone scope (M0 → M7) is functionally complete. The following
-have all been implemented since the original plan:
+The v1 milestone scope (M0 → M7) is functionally complete. Recent work has
+filled out the gameplay surface so it covers the BYOND source verbatim:
 
-- All 11 game modes (Normal, Vampire, Witch, Zombie, Doppelganger, Secret,
-  Extended, Death Note, Death Note Classic, Ghost, Slender)
-- Combat with evade / face-to-face crit / behind-target glance
-- Bleed, KO, freeze (feather), sedative-slow status timers
-- Body discovery + suspect-description variant
-- Search-consent flow + plant-on-body framing
-- Vote-kick, vote-end-game, vote-mode
-- Lobby chat + in-game proximity chat (Say/Whisper/Shout/Emote/OOC/Dead/
-  Ghost/Shini)
-- Day/night clock + lighting + time-of-day tint
-- Containers (look + take + put + push), drawers, lockers, fridge, vending
-- Doors (regular, locked-with-keycard, escape-with-keycard)
-- Steel Door escape with town-survival win condition
-- Wash blood at sinks
-- Sprint (Shift) with stamina drain
-- Shove (X), Plant on body (M), Container push (Y), Corpse push (O)
-- Anonymous PDA-to-PDA SMS
-- Class-roster classroom assignment
+**Modes.** Normal, Vampire, Witch, Zombie, Doppelganger, Secret, Extended,
+Death Note, Death Note Classic, Ghost, Slender (11 of 11).
+
+**Combat.** Evade / face-to-face crit / behind-target glance rolls. Bleed,
+KO, freeze (feather), sedative-slow status timers. Mystic Eyes (Nanaya's
+Nanatsu-Yoru with glasses removed: 1% insta-kill / rand 1-33).
+
+**Detective layer.** Body discovery + suspect-description variant. Search
+-consent flow. Plant-on-body framing. Per-player bloody (0..8) overlay tier;
+blood drips on movement. Security cameras + monitors with `View_Tapes`
+hair-color forensics; `Delete_Tapes` killer-only counter.
+
+**Environment.** Tile-step movement with warp-tile teleports (vents, stair
+pairs). Doors (regular, locked-with-keycard, escape-with-keycard). Wash blood
+at sinks. Steel Door escape with town-survival win condition. Light switches
+(13 tagged areas) + dim overlay when lights are off. Containers (look + take +
+put + push). Vending machines. Day/night clock + lighting + time-of-day tint.
+
+**Social.** Lobby chat + in-game proximity chat (Say/Whisper/Shout/Emote/OOC/
+Dead/Ghost/Shini). Vote-kick, vote-end-game, vote-mode. Anonymous PDA-to-PDA
+SMS. Shinigami eye deal (offer / accept with scheduled death).
+
+**Other.** Class-roster classroom assignment. Sprint, shove, plant, drag, push.
+Watcher join. Vampire hunger. Witch butterflies. Dragon-style feather
+projectile. Suicide, throw, door-code entry, paper write/airplane.
 
 What remains is in [`TODO.md`](./TODO.md) — deferred polish, host options,
-NPC AI for Slender / NPC-zombie variant, alternate map, profile +
+NPC-controlled Slender / Zombie variants, alternate map, profile +
 stats persistence, and the production deploy story (Helm + Sentry +
 Prometheus).
 

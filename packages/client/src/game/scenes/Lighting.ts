@@ -37,10 +37,9 @@ interface LightingData {
 
 /**
  * Tints the screen by in-game clock and cuts a soft radial hole for each
- * visible player based on their inventory's light-emitting items. The DM
- * source (`dynamic-lighting-simple.dmi`, `Light Source.dm`) inspired this;
- * we render it as a Phaser RenderTexture overlay rather than a per-tile
- * lightmap (cheap, no shader).
+ * visible player based on their inventory's light-emitting items. Rendered
+ * as a Phaser RenderTexture overlay rather than a per-tile lightmap so we
+ * stay cheap and shader-free.
  */
 export class Lighting extends Scene {
   private cfg!: LightingData;

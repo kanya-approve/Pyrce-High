@@ -1,11 +1,9 @@
 /**
- * Atlas frame keys produced by `tools/dmi-extract`. Format is
- * `${source}/${state}/${dir}/${frame}` where source is the .dmi path under
- * `assets/dmi-source/` (sans extension), state is lowercase + underscored,
- * dir is BYOND's compass code (S/N/E/W/SE/SW/NE/NW; 1-dir states only emit S).
- *
- * Unmapped items fall back to placeholder rectangles in the client (the few
- * entries below where a DMI sprite doesn't exist).
+ * Atlas frame keys for the rendered sprite sheet at
+ * `packages/client/public/atlases/sprites.{png,json}`. Format is
+ * `${source}/${state}/${dir}/${frame}` where dir is the compass code
+ * (S/N/E/W/SE/SW/NE/NW). Unmapped items fall back to placeholder
+ * rectangles in the client.
  */
 
 export const ATLAS_KEY = 'sprites';

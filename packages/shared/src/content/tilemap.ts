@@ -1,6 +1,6 @@
 /**
- * Pyrce tilemap JSON schema. Produced by `tools/dm-to-tiled` from a BYOND
- * `.dmm` source file. Both client and server consume the same artifact.
+ * Pyrce tilemap JSON schema. Both client and server consume the same
+ * artifact at `packages/shared/src/content/tilemap/default.json`.
  *
  *  - `grid` is `[y][x]` indexed; y=0 is the NORTH edge of the world.
  *  - `tileTypes[grid[y][x]]` gives the tile metadata at that cell.

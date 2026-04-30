@@ -324,6 +324,14 @@ export function matchLoop(
     }
   }
 
+  // Eye-deal offer expiry: drop pending offers whose timeout has elapsed.
+  if (state.eyeOffers) {
+    for (const uid in state.eyeOffers) {
+      const o = state.eyeOffers[uid];
+      if (o && tick >= o.expiresAtTick) delete state.eyeOffers[uid];
+    }
+  }
+
   // Slow expiry: drop slowedUntilTick entries whose timers have elapsed,
   // refreshing the player's status HUD when one ends.
   if (state.slowedUntilTick) {
@@ -895,14 +903,13 @@ function triggerPopperIfAny(
   }
   if (!popperId) return;
   delete state.groundItems[popperId];
-  const removeDelta: S2CFxSmoke = { x: player.x, y: player.y, durationMs: 1500 };
-  dispatcher.broadcastMessage(OpCode.S2C_FX_SMOKE, JSON.stringify(removeDelta), null, null, true);
+  broadcastGroundItemDelta(dispatcher, { removed: [popperId] });
+  const fx: S2CFxSmoke = { x: player.x, y: player.y, durationMs: 1500 };
+  dispatcher.broadcastMessage(OpCode.S2C_FX_SMOKE, JSON.stringify(fx), null, null, true);
   broadcastFxSound(dispatcher, 'smallexplosion', player.x, player.y, 0.7);
   state.koUntilTick ??= {};
   state.koUntilTick[player.userId] = tick + TICK_RATE * 4;
   pushStatus(state, dispatcher, player);
-  // Inform clients of the disappeared ground popper.
-  sendGroundItemsFull(dispatcher, state, null);
 }
 
 // ---------- inventory handlers ----------
@@ -2667,9 +2674,8 @@ function handleVoteEndGame(
 }
 
 /**
- * Vending machine: spend 100 yen for one soda. DM `turf.dm:78-94` —
- * vending1.dmi soda machine. The other vending sprites (vending2, vending3)
- * exist as placeable cosmetics in DM and are accepted here as a no-op.
+ * Vending machine: spend 100 yen for one soda. The two non-soda vending
+ * sprites are placeable cosmetics and are accepted here as a no-op.
  */
 const VENDING_COST_YEN = 100;
 
