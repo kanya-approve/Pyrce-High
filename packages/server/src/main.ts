@@ -9,6 +9,7 @@ import {
   matchSignal,
   matchTerminate,
 } from './matches/pyrceRoom.js';
+import { allocateGameServerRpc } from './rpc/allocateGameServer.js';
 import { createMatchRpc, listMatchesRpc } from './rpc/match.js';
 import { loadProfileRpc, saveProfileRpc } from './rpc/profile.js';
 
@@ -36,6 +37,7 @@ const g = globalThis as unknown as {
   saveProfileRpc: typeof saveProfileRpc;
   createMatchRpc: typeof createMatchRpc;
   listMatchesRpc: typeof listMatchesRpc;
+  allocateGameServerRpc: typeof allocateGameServerRpc;
   matchInit: typeof matchInit;
   matchJoinAttempt: typeof matchJoinAttempt;
   matchJoin: typeof matchJoin;
@@ -49,6 +51,7 @@ g.loadProfileRpc = loadProfileRpc;
 g.saveProfileRpc = saveProfileRpc;
 g.createMatchRpc = createMatchRpc;
 g.listMatchesRpc = listMatchesRpc;
+g.allocateGameServerRpc = allocateGameServerRpc;
 g.matchInit = matchInit;
 g.matchJoinAttempt = matchJoinAttempt;
 g.matchJoin = matchJoin;
@@ -70,6 +73,7 @@ function InitModule(
   initializer.registerRpc('saveProfile', saveProfileRpc);
   initializer.registerRpc('createMatch', createMatchRpc);
   initializer.registerRpc('listMatches', listMatchesRpc);
+  initializer.registerRpc('allocateGameServer', allocateGameServerRpc);
 
   initializer.registerMatch(MATCH_NAME, {
     matchInit,

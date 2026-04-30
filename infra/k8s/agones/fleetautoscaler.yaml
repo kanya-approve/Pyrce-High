@@ -1,0 +1,16 @@
+# Buffer-based autoscaler: keep 2-5 spare Ready GameServers ahead of demand.
+# When Allocated rate exceeds buffer, Agones provisions more; when idle,
+# it scales the pool back down to minReplicas.
+apiVersion: autoscaling.agones.dev/v1
+kind: FleetAutoscaler
+metadata:
+  name: pyrce-buffer
+  namespace: pyrce
+spec:
+  fleetName: pyrce
+  policy:
+    type: Buffer
+    buffer:
+      bufferSize: 2
+      minReplicas: 2
+      maxReplicas: 50

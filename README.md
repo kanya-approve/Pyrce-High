@@ -22,20 +22,60 @@ isn't explicitly out of v1 scope. Deferred polish is logged in
 
 ```
 packages/
-  shared/   @pyrce/shared   types, opcodes, content schemas
-  server/   @pyrce/server   Nakama runtime modules (Rollup → dist/index.js)
-  client/   @pyrce/client   Phaser 4 + Vite browser app
+  shared/        @pyrce/shared        types, opcodes, content schemas
+  server/        @pyrce/server        Nakama runtime modules (Rollup → dist/index.js)
+  client/        @pyrce/client        Phaser 4 + Vite browser app
+  game-server/   @pyrce/game-server   Agones-managed dedicated game-server pod (Node + ws)
 
 tools/
-  smoke/                    end-to-end smoke tests (m4–m7, browser puppeteer)
+  smoke/                         end-to-end smoke tests (m4–m7, browser puppeteer)
 
 infra/
-  docker-compose.yml        local Postgres + Nakama
-  docker-compose.prod.yml   prod compose target
-  nakama/                   nakama config
+  docker-compose.yml             local Postgres + Nakama
+  docker-compose.prod.yml        prod compose target
+  nakama/                        nakama config
+  helm/pyrce-nakama/             Helm chart (Nakama Deployment), backed by bjw-s common
+  helm/pyrce-client/             Helm chart (nginx + Vite bundle), backed by bjw-s common
+  k8s/agones/                    Agones Fleet + FleetAutoscaler manifests for the
+                                 realtime game-server tier (CRD-based, not Helm)
 
-TODO.md                     deferred / declined work, with re-implementation hints
+.github/workflows/
+  ci.yml                         lint + typecheck + build + helm lint
+  images.yml                     build + push pyrce-nakama / pyrce-client / pyrce-game-server
+                                 images to ghcr.io/kanya-approve
+
+TODO.md                          deferred / declined work, with re-implementation hints
 ```
+
+## Architecture
+
+Three deploy tiers:
+
+```
+                      ┌──────────────────────────────┐
+                      │ pyrce-client (nginx + Vite)  │  Helm chart
+                      │ Phaser 4 browser app         │
+                      └─────────────┬────────────────┘
+                                    │ WSS
+                      ┌─────────────▼────────────────┐
+                      │ pyrce-nakama                 │  Helm chart, sticky-cookie ingress
+                      │ matchmaker / identity /      │
+                      │ social / lobby / chat        │
+                      └─────────────┬────────────────┘
+                                    │ Agones Allocator API (mTLS)
+                      ┌─────────────▼────────────────┐
+                      │ pyrce-game-server            │  Agones Fleet + FleetAutoscaler
+                      │ realtime round (movement,    │  one pod per match
+                      │ combat, lighting, …)         │
+                      └──────────────────────────────┘
+```
+
+In v1 the realtime round logic still lives in the Nakama match handler;
+the `game-server` package is the migration target so future rounds can
+run in Agones-managed dedicated pods. The `allocateGameServer` Nakama
+RPC speaks to the Agones Allocator and returns an `address:port` to
+matched clients — when the match handler migrates, the client just
+follows the returned URL instead of staying on the Nakama match.
 
 ## Quick start
 

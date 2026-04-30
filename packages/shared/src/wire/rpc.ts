@@ -10,6 +10,7 @@ export const RpcId = {
   SaveProfile: 'saveProfile',
   CreateMatch: 'createMatch',
   ListMatches: 'listMatches',
+  AllocateGameServer: 'allocateGameServer',
 } as const;
 export type RpcId = (typeof RpcId)[keyof typeof RpcId];
 
@@ -51,6 +52,29 @@ export interface MatchListing {
 }
 export interface ListMatchesResponse {
   matches: MatchListing[];
+}
+
+// allocateGameServer — Nakama proxies a Kubernetes
+// `GameServerAllocation` request to the in-cluster Agones Allocator
+// service. On success the client receives the address:port of a freshly
+// Allocated GameServer to connect a WebSocket to. The match handler
+// keeps the lobby/identity loop; the realtime round runs in the
+// returned dedicated process.
+export interface AllocateGameServerRequest {
+  /** Optional Nakama matchId for telemetry — surfaced as an annotation. */
+  matchId?: string;
+  /** Optional region label so multi-region clusters can prefer-local. */
+  region?: string;
+}
+export interface AllocateGameServerResponse {
+  /** GameServer name (e.g. `pyrce-9p4n2`). */
+  gameServerName: string;
+  /** Public-routable address (Agones GAME_SERVER_ADDRESS). */
+  address: string;
+  /** Allocated dynamic port. */
+  port: number;
+  /** Source-of-truth for the allocation timestamp (ISO-8601). */
+  allocatedAt: string;
 }
 
 /**

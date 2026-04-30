@@ -1,0 +1,106 @@
+controllers:
+  nakama:
+    type: deployment
+    replicas: 2
+    strategy: RollingUpdate
+    containers:
+      nakama:
+        image:
+          repository: ghcr.io/kanya-approve/pyrce-nakama
+          tag: latest
+          pullPolicy: IfNotPresent
+        command:
+          - /bin/sh
+          - -ecx
+          - >-
+            /nakama/nakama migrate up --database.address=$DB_ADDR
+            && /nakama/nakama --config /nakama/data/local.yml
+            --database.address=$DB_ADDR
+            --runtime.path=/nakama/data/modules
+            --runtime.js_entrypoint=index.js
+        env:
+          DB_ADDR:
+            valueFrom:
+              secretKeyRef:
+                name: nakama-postgres
+                key: dsn
+          AGONES_ALLOCATOR_URL:
+            value: https://agones-allocator.agones-system.svc:443
+          AGONES_ALLOCATOR_NAMESPACE:
+            value: pyrce
+          AGONES_ALLOCATOR_FLEET:
+            value: pyrce
+        probes:
+          liveness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /
+                port: 7350
+              initialDelaySeconds: 10
+              periodSeconds: 10
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /
+                port: 7350
+              periodSeconds: 5
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+
+service:
+  nakama:
+    controller: nakama
+    ports:
+      api:
+        port: 7350
+        protocol: HTTP
+      rt:
+        port: 7349
+        protocol: TCP
+      console:
+        port: 7351
+        protocol: HTTP
+
+ingress:
+  nakama:
+    enabled: true
+    className: nginx
+    annotations:
+      # Sticky sessions: WebSocket clients must keep landing on the same
+      # pod for the lifetime of their match. Cookie-based affinity beats
+      # source-IP for mobile NATs / corporate proxies.
+      nginx.ingress.kubernetes.io/affinity: cookie
+      nginx.ingress.kubernetes.io/affinity-mode: persistent
+      nginx.ingress.kubernetes.io/session-cookie-name: pyrce-affinity
+      nginx.ingress.kubernetes.io/session-cookie-expires: '3600'
+      nginx.ingress.kubernetes.io/session-cookie-max-age: '3600'
+      nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+    hosts:
+      - host: play.pyrcehigh.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+            service:
+              identifier: nakama
+              port: api
+    tls:
+      - hosts: [play.pyrcehigh.example.com]
+        secretName: pyrce-nakama-tls
+
+defaultPodOptions:
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: pyrce-nakama

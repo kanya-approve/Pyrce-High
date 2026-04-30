@@ -1,0 +1,15 @@
+apiVersion: v2
+name: pyrce-nakama
+description: |
+  Pyrce Nakama backplane — matchmaker / identity / social. Built on the
+  bjw-s common library chart (https://github.com/bjw-s-labs/helm-charts)
+  so we get sane defaults for service, ingress, probes, PDB, and
+  resource budgets.
+type: application
+version: 0.1.0
+appVersion: '0.1.0'
+
+dependencies:
+  - name: common
+    repository: https://bjw-s-labs.github.io/helm-charts
+    version: 4.6.2

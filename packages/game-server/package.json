@@ -1,0 +1,27 @@
+{
+  "name": "@pyrce/game-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agones-managed dedicated Pyrce game-server pod (Node.js + ws + Agones SDK)",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@google-cloud/agones-sdk": "1.57.0",
+    "@pyrce/shared": "workspace:*",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

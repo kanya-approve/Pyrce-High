@@ -13,7 +13,7 @@
   "dependencies": {
     "@heroiclabs/nakama-js": "^2.8.0",
     "@pyrce/shared": "workspace:*",
-    "phaser": "4.0.0"
+    "phaser": "4.1.0"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",

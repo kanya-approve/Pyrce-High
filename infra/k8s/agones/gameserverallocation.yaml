@@ -1,0 +1,22 @@
+# Reference: the GameServerAllocation request that Nakama's
+# `allocateGameServer` RPC issues against the Agones Allocator service.
+# The actual call is HTTPS to the agones-allocator service in cluster
+# (or `agones-allocator.<region>.example.com` via Ingress), with mTLS.
+#
+# This YAML is illustrative — do NOT `kubectl apply` it directly; it's
+# just an example of what the Allocator endpoint receives over the wire.
+apiVersion: allocation.agones.dev/v1
+kind: GameServerAllocation
+metadata:
+  namespace: pyrce
+spec:
+  selectors:
+    - matchLabels:
+        agones.dev/fleet: pyrce
+        game: pyrce
+      gameServerState: Ready
+  metadata:
+    labels:
+      pyrce-match: 'true'
+    annotations:
+      pyrce-allocated-by: nakama

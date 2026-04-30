@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Helm subchart tarballs — pulled by `helm dependency update`. Chart.lock
+# is committed so dep versions stay reproducible.
+infra/helm/*/charts/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
