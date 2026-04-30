@@ -1,0 +1,91 @@
+name: Client Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VITE_NAKAMA_HOST: ${{ vars.VITE_NAKAMA_HOST }}
+  VITE_NAKAMA_PORT: ${{ vars.VITE_NAKAMA_PORT || '443' }}
+  VITE_NAKAMA_USE_SSL: ${{ vars.VITE_NAKAMA_USE_SSL || 'true' }}
+  VITE_NAKAMA_KEY: ${{ vars.VITE_NAKAMA_KEY || 'defaultkey' }}
+  VITE_BUILD_ENV: ${{ vars.VITE_BUILD_ENV || 'production' }}
+
+jobs:
+  build:
+    name: build pyrcehigh.kanya.io bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared
+        run: pnpm --filter @pyrce/shared build
+
+      - name: Build client
+        run: pnpm --filter @pyrce/client build
+
+      - name: Stamp build metadata
+        run: |
+          cat > packages/client/dist/version.json <<EOF
+          {
+            "git_sha": "${{ github.sha }}",
+            "ref": "${{ github.ref }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "host": "${{ env.VITE_NAKAMA_HOST }}"
+          }
+          EOF
+
+      - name: Pack
+        id: pack
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="main-$(git rev-parse --short=8 HEAD)"
+          fi
+          archive="pyrce-client-${version}.tar.gz"
+          tar -czf "${archive}" -C packages/client/dist .
+          sha256sum "${archive}" | tee "${archive}.sha256"
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pyrce-client-${{ steps.pack.outputs.version }}
+          path: |
+            ${{ steps.pack.outputs.archive }}
+            ${{ steps.pack.outputs.archive }}.sha256
+          retention-days: 30
+
+      - name: Create GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ steps.pack.outputs.version }}
+          files: |
+            ${{ steps.pack.outputs.archive }}
+            ${{ steps.pack.outputs.archive }}.sha256
+          generate_release_notes: true
+          fail_on_unmatched_files: true
