@@ -78,6 +78,89 @@ export class Tilemap {
     const tt = this.raw.tileTypes[idx];
     return tt?.path === '/turf/School_Floors/Bathroom_Floor';
   }
+
+  /** Find the warp at (x,y), or null if none. */
+  warpAt(x: number, y: number): { tag: string; oneway: boolean } | null {
+    for (const w of this.raw.warps ?? []) {
+      if (w.x === x && w.y === y) return { tag: w.tag, oneway: w.oneway };
+    }
+    return null;
+  }
+
+  /** Pick the destination warp for a tag — first matching warp that isn't (sx,sy). */
+  warpDestination(tag: string, sx: number, sy: number): { x: number; y: number } | null {
+    for (const w of this.raw.warps ?? []) {
+      if (w.tag !== tag) continue;
+      if (w.x === sx && w.y === sy) continue;
+      // Skip oneway destinations — they only send.
+      if (w.oneway) continue;
+      return { x: w.x, y: w.y };
+    }
+    // Allow oneway-to-oneway sibling pairs (DM ventdrop/ventdrop2 style):
+    // if the source is also oneway, fall through to the first non-self.
+    for (const w of this.raw.warps ?? []) {
+      if (w.tag !== tag) continue;
+      if (w.x === sx && w.y === sy) continue;
+      return { x: w.x, y: w.y };
+    }
+    return null;
+  }
+
+  /** Light switch at (x,y) and adjacency-check result for use. */
+  lightSwitchAt(x: number, y: number): { tag: string; x: number; y: number } | null {
+    for (const sw of this.raw.lightSwitches ?? []) {
+      if (sw.x === x && sw.y === y) return { tag: sw.tag, x, y };
+    }
+    return null;
+  }
+
+  /** All light tiles for a given tag — used to compute the dark area. */
+  lightsForTag(tag: string): Array<{ x: number; y: number }> {
+    const out: Array<{ x: number; y: number }> = [];
+    for (const l of this.raw.lights ?? []) {
+      if (l.tag === tag) out.push({ x: l.x, y: l.y });
+    }
+    return out;
+  }
+
+  /** Camera at (x,y), used for resolving Camera-View targets. */
+  cameraByTag(tag: string): { x: number; y: number } | null {
+    for (const c of this.raw.cameras ?? []) {
+      if (c.tag === tag) return { x: c.x, y: c.y };
+    }
+    return null;
+  }
+
+  /** Monitor at (x,y) — used to gate camera/tape verbs. */
+  monitorAt(x: number, y: number): boolean {
+    for (const m of this.raw.monitors ?? []) {
+      if (m.x === x && m.y === y) return true;
+    }
+    return false;
+  }
+
+  /** Adjacent monitor (Chebyshev ≤ 1). */
+  isAdjacentToMonitor(x: number, y: number): boolean {
+    for (const m of this.raw.monitors ?? []) {
+      if (Math.max(Math.abs(m.x - x), Math.abs(m.y - y)) <= 1) return true;
+    }
+    return false;
+  }
+
+  /** Adjacent light switch (Chebyshev ≤ 1). */
+  adjacentLightSwitch(x: number, y: number): { tag: string; x: number; y: number } | null {
+    for (const sw of this.raw.lightSwitches ?? []) {
+      if (Math.max(Math.abs(sw.x - x), Math.abs(sw.y - y)) <= 1) {
+        return { tag: sw.tag, x: sw.x, y: sw.y };
+      }
+    }
+    return null;
+  }
+
+  /** All cameras (read-only). */
+  get cameras(): Array<{ x: number; y: number; tag: string }> {
+    return this.raw.cameras ?? [];
+  }
 }
 
 /**

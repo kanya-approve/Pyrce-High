@@ -42,6 +42,8 @@ export interface PublicPlayerInGame {
   disguiseAsUserId?: string;
   /** Username override shown when disguised (matches the copied corpse). */
   disguiseUsername?: string;
+  /** Number of kills (0..8). Client renders a blood-stain overlay tier. */
+  bloody: number;
 }
 
 export interface S2CPhaseChange {
@@ -61,6 +63,8 @@ export interface S2CPlayerMoved {
   tickN: number;
   equippedItemId: string | null;
   equippedItemBloody: boolean;
+  /** Player's current bloody tier (0-8). */
+  bloody: number;
 }
 
 export interface S2CError {
@@ -363,4 +367,67 @@ export interface S2CContainerMoved {
 /** Push a corpse one tile in your facing direction. */
 export interface C2SCorpsePush {
   corpseId: string;
+}
+
+// ----- light switches / fuse box -----
+
+export interface C2SLightSwitchToggle {
+  /** Tag of the switch (resolves to a list of lights with the same tag). */
+  tag: string;
+}
+
+/** Set of light tags currently switched OFF. Initial + delta share the shape. */
+export interface S2CLightState {
+  offTags: string[];
+}
+
+// ----- cameras / monitors / tapes -----
+
+export interface C2SCameraView {
+  /** Camera tag selected from a list (delivered via the public tilemap). */
+  tag: string;
+}
+
+export interface S2CCameraFeed {
+  tag: string;
+  x: number;
+  y: number;
+  /** Visible duration before camera returns to player. */
+  durationMs: number;
+}
+
+/** View security tapes from an adjacent monitor. */
+export type C2STapeView = Record<string, never>;
+
+export interface S2CTapeResult {
+  /** "<color>" string in DM-style hex, or 'deleted' / 'no_tapes' / 'wrong_mode'. */
+  result: string;
+}
+
+/** Killer-only: erase tape evidence so View_Tapes returns 'deleted'. */
+export type C2STapeDelete = Record<string, never>;
+
+// ----- player bloody / blood drips -----
+
+export interface S2CBloodDrip {
+  x: number;
+  y: number;
+  /** Higher = more blood; client renders darker / larger. */
+  intensity: number;
+}
+
+// ----- shinigami eye deal -----
+
+export interface C2SOfferEyes {
+  targetUserId: string;
+}
+
+export interface S2CEyeOffer {
+  fromUserId: string;
+  fromUsername: string;
+}
+
+export interface C2SAcceptEyes {
+  /** True to accept the deal (loses half HP, gains real-name vision, scheduled death). */
+  accept: boolean;
 }

@@ -114,9 +114,28 @@ export function resolveAttack(
       outcome = 'glance';
     }
   }
+  // Mystic Eyes: Nanaya wielding Nanatsu-Yoru with glasses removed swaps
+  // the standard knife damage for a "lines of death" roll — 1% chance of
+  // instant kill (999 dmg), otherwise rand(1, 33) chip damage. The
+  // glasses-off check reads `glasses_case`'s instance-data `on=false`.
+  if (outcome !== 'miss' && weaponName === 'Nanatsu-Yoru' && attacker.roleId === 'vampire') {
+    const glasses = attacker.inventory.items.find((it) => it.itemId === 'glasses_case');
+    const glassesOff = glasses?.data?.['on'] === false;
+    if (glassesOff) {
+      if (Math.floor(Math.random() * 100) === 0) {
+        dmg = 999;
+      } else {
+        dmg = 1 + Math.floor(Math.random() * 33);
+      }
+    }
+  }
   result.outcome = outcome;
   result.damage = dmg;
   victim.hp = Math.max(0, victim.hp - dmg);
+  // Bloody bump: any non-miss hit drips a little blood on victim too.
+  if (dmg > 0) {
+    victim.bloody = Math.min(8, (victim.bloody ?? 0) + 1);
+  }
 
   if (victim.hp === 0) {
     if (weapon.lethal) {
@@ -146,6 +165,10 @@ export function resolveAttack(
       };
       result.killed = true;
       result.corpse = corpse;
+
+      // Attacker accumulates blood on every kill — visible to onlookers via
+      // the public sprite tier. Caps at 8 (DM `bloody==6` flips to "very").
+      attacker.bloody = Math.min(8, (attacker.bloody ?? 0) + 1);
 
       // Mark the killer's equipped weapon bloody if the atlas has a bloody
       // variant for that itemId — purely cosmetic. Goja proxy: replace the

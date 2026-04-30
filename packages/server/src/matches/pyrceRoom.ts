@@ -1,5 +1,7 @@
 import {
+  type C2SAcceptEyes,
   type C2SAttack,
+  type C2SCameraView,
   type C2SChat,
   type C2SContainerLook,
   type C2SContainerPush,
@@ -17,8 +19,10 @@ import {
   type C2SInvPickup,
   type C2SInvSetHotkey,
   type C2SInvUse,
+  type C2SLightSwitchToggle,
   type C2SLobbyStartGame,
   type C2SMoveIntent,
+  type C2SOfferEyes,
   type C2SPaperAirplane,
   type C2SPaperWrite,
   type C2SPdaSend,
@@ -51,6 +55,8 @@ import {
   ROLES,
   type RoleId,
   type S2CAnnouncement,
+  type S2CBloodDrip,
+  type S2CCameraFeed,
   type S2CChatMessage,
   type S2CClockTick,
   type S2CContainerContents,
@@ -61,6 +67,7 @@ import {
   type S2CCraftResult,
   type S2CDoorCode,
   type S2CDoorState,
+  type S2CEyeOffer,
   type S2CFxButterfly,
   type S2CFxFeather,
   type S2CFxSmoke,
@@ -71,6 +78,7 @@ import {
   type S2CInitialSnapshot,
   type S2CInvDelta,
   type S2CInvFull,
+  type S2CLightState,
   type S2CPaperReceived,
   type S2CPaperText,
   type S2CPhaseChange,
@@ -86,6 +94,7 @@ import {
   type S2CSearchRequest,
   type S2CSelfRoleState,
   type S2CStudentRoster,
+  type S2CTapeResult,
   type S2CTyping,
   type S2CVoteEndGameTally,
   type S2CVoteKickTally,
@@ -660,6 +669,24 @@ function handleMessage(
     case OpCode.C2S_CORPSE_PUSH:
       handleCorpsePush(state, m, dispatcher);
       break;
+    case OpCode.C2S_LIGHT_SWITCH_TOGGLE:
+      handleLightSwitchToggle(state, m, dispatcher);
+      break;
+    case OpCode.C2S_CAMERA_VIEW:
+      handleCameraView(state, m, dispatcher);
+      break;
+    case OpCode.C2S_TAPE_VIEW:
+      handleTapeView(state, m, dispatcher);
+      break;
+    case OpCode.C2S_TAPE_DELETE:
+      handleTapeDelete(state, m, dispatcher);
+      break;
+    case OpCode.C2S_OFFER_EYES:
+      handleOfferEyes(state, m, dispatcher);
+      break;
+    case OpCode.C2S_ACCEPT_EYES:
+      handleAcceptEyes(state, m, dispatcher);
+      break;
     default:
       break;
   }
@@ -760,6 +787,7 @@ function handleStartGame(
     }
   }
   sendGroundItemsFull(dispatcher, state, null);
+  broadcastLightState(dispatcher, state);
   refreshLabel(dispatcher, state);
   logger.info(
     'phase: Lobby -> InGame, mode=%s, players=%d, containers=%d',
@@ -809,16 +837,72 @@ function handleMoveIntent(
     const o = state.players[otherId];
     if (o && o.x === nx && o.y === ny) return;
   }
+  const prevX = player.x;
+  const prevY = player.y;
   player.x = nx;
   player.y = ny;
   player.lastMoveTickN = tick;
+
+  // Bloody players leave a drip trail at the tile they just left.
+  if ((player.bloody ?? 0) > 0) {
+    const drip: S2CBloodDrip = { x: prevX, y: prevY, intensity: player.bloody ?? 1 };
+    dispatcher.broadcastMessage(OpCode.S2C_BLOOD_DRIP, JSON.stringify(drip), null, null, true);
+  }
+
+  // Step on a popper trap → KO + broadcast the explosion.
+  triggerPopperIfAny(state, dispatcher, player, tick);
+
   broadcastPlayerMoved(dispatcher, player, tick, state);
+
+  // Warp tile: if the destination tile is a warp, teleport to its pair.
+  const warp = tilemap.warpAt(nx, ny);
+  if (warp) {
+    const dest = tilemap.warpDestination(warp.tag, nx, ny);
+    if (dest) {
+      player.x = dest.x;
+      player.y = dest.y;
+      broadcastPlayerMoved(dispatcher, player, tick, state);
+      broadcastFxSound(dispatcher, 'doormetal', dest.x, dest.y, 0.4);
+      return;
+    }
+  }
+
   // Footstep audio at low volume; range-attenuated by the client.
   // Witch invisablewalk: silent steps so the disguise isn't blown by sound.
   const invUntil = player.roleData?.['invisableUntilTick'] as number | undefined;
   if (invUntil === undefined || tick >= invUntil) {
     broadcastFxSound(dispatcher, 'footsteps', nx, ny, 0.25);
   }
+}
+
+/**
+ * Popper traps are ground items; stepping on one triggers an explosion
+ * and KOs anyone within Chebyshev 1. The trigger consumes the popper.
+ */
+function triggerPopperIfAny(
+  state: PyrceMatchState,
+  dispatcher: nkruntime.MatchDispatcher,
+  player: PlayerInGame,
+  tick: number,
+): void {
+  let popperId: string | null = null;
+  for (const gid in state.groundItems) {
+    const g = state.groundItems[gid];
+    if (g && g.itemId === 'poppers' && g.x === player.x && g.y === player.y) {
+      popperId = gid;
+      break;
+    }
+  }
+  if (!popperId) return;
+  delete state.groundItems[popperId];
+  const removeDelta: S2CFxSmoke = { x: player.x, y: player.y, durationMs: 1500 };
+  dispatcher.broadcastMessage(OpCode.S2C_FX_SMOKE, JSON.stringify(removeDelta), null, null, true);
+  broadcastFxSound(dispatcher, 'smallexplosion', player.x, player.y, 0.7);
+  state.koUntilTick ??= {};
+  state.koUntilTick[player.userId] = tick + TICK_RATE * 4;
+  pushStatus(state, dispatcher, player);
+  // Inform clients of the disappeared ground popper.
+  sendGroundItemsFull(dispatcher, state, null);
 }
 
 // ---------- inventory handlers ----------
@@ -960,11 +1044,22 @@ function handleInvUse(
       return;
     }
     case 'popper_trap': {
-      // Drops a smoke + announce. Trap behaviour proper is a M-future; for now
-      // it puffs at the player's tile and consumes the charge.
-      const fx: S2CFxSmoke = { x: player.x, y: player.y, durationMs: 2500 };
-      dispatcher.broadcastMessage(OpCode.S2C_FX_SMOKE, JSON.stringify(fx), null, null, true);
-      consumeCharge(state, dispatcher, m.sender, player, inst.instanceId);
+      // Drop the popper as a ground item at the player's tile. Anyone
+      // (including the placer themselves) who steps on it triggers the
+      // explosion + 4s KO via triggerPopperIfAny() in the move handler.
+      const ground = fromInstance(inst, player.x, player.y);
+      state.groundItems[ground.groundItemId] = ground;
+      broadcastGroundItemDelta(dispatcher, { upserted: [toPublicGroundItem(ground)] });
+      const removed = removeItem(player.inventory, inst.instanceId);
+      if (removed) {
+        player.inventory = removed.inventory;
+        sendInvDelta(dispatcher, state, m.sender, {
+          removed: [inst.instanceId],
+          hotkeys: removed.inventory.hotkeys,
+          equipped: removed.inventory.equipped,
+          weight: removed.inventory.weight,
+        });
+      }
       return;
     }
     case 'key_card_swipe': {
@@ -2095,6 +2190,247 @@ function handleCorpsePush(
   broadcastCorpseUpdate(dispatcher, c);
 }
 
+// ---------- light switches / fuse box ----------
+
+const EYE_DEAL_OFFER_TIMEOUT_TICKS = TICK_RATE * 30;
+
+/**
+ * Toggle a light-switch's tag in `state.lightsOff`. Player must be adjacent
+ * to a switch matching the tag. Broadcasts the new full off-set so clients
+ * darken the affected area.
+ */
+function handleLightSwitchToggle(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SLightSwitchToggle>(m.data);
+  if (!req?.tag) return;
+  const sw = tilemap.adjacentLightSwitch(player.x, player.y);
+  if (!sw || sw.tag !== req.tag) {
+    sendError(dispatcher, m.sender, 'no_switch', 'no light switch adjacent');
+    return;
+  }
+  state.lightsOff ??= {};
+  if (state.lightsOff[req.tag]) delete state.lightsOff[req.tag];
+  else state.lightsOff[req.tag] = true;
+  broadcastLightState(dispatcher, state);
+}
+
+function broadcastLightState(dispatcher: nkruntime.MatchDispatcher, state: PyrceMatchState): void {
+  const offTags = Object.keys(state.lightsOff ?? {});
+  const payload: S2CLightState = { offTags };
+  dispatcher.broadcastMessage(OpCode.S2C_LIGHT_STATE, JSON.stringify(payload), null, null, true);
+}
+
+// ---------- security cameras / monitors / tapes ----------
+
+/**
+ * View a security camera. Player must be adjacent to a Monitor.
+ * Replies with the camera's tile coords; client briefly pans the camera there.
+ */
+function handleCameraView(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  if (!tilemap.isAdjacentToMonitor(player.x, player.y)) {
+    sendError(dispatcher, m.sender, 'no_monitor', 'must stand next to a security monitor');
+    return;
+  }
+  const req = parseBody<C2SCameraView>(m.data);
+  if (!req?.tag) return;
+  const cam = tilemap.cameraByTag(req.tag);
+  if (!cam) {
+    sendError(dispatcher, m.sender, 'no_camera', 'unknown camera tag');
+    return;
+  }
+  const payload: S2CCameraFeed = { tag: req.tag, x: cam.x, y: cam.y, durationMs: 6000 };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_CAMERA_FEED,
+    JSON.stringify(payload),
+    [m.sender],
+    null,
+    true,
+  );
+}
+
+/**
+ * View tapes from an adjacent monitor. In Normal/Witch/Doppelganger modes,
+ * reveals the killer's hair color (or 'deleted' if Delete_Tapes was used,
+ * or 'wrong_mode' for modes where tapes don't help).
+ */
+const TAPE_HAIR_COLORS = ['#222222', '#553311', '#cc9966', '#aa3333', '#dddddd'];
+
+function handleTapeView(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  if (!tilemap.isAdjacentToMonitor(player.x, player.y)) {
+    sendError(dispatcher, m.sender, 'no_monitor', 'must stand next to a security monitor');
+    return;
+  }
+  const mode = effectiveModeId(state);
+  const tapeRelevant = mode === 'normal' || mode === 'witch' || mode === 'doppelganger';
+  let result: string;
+  if (!tapeRelevant) {
+    result = 'wrong_mode';
+  } else if (state.tapesDeleted) {
+    result = 'deleted';
+  } else {
+    // Find the killer / witch / doppelganger to source a "hair color".
+    let suspect: PlayerInGame | null = null;
+    for (const uid in state.players) {
+      const p = state.players[uid];
+      if (!p) continue;
+      if (p.roleId === 'killer' || p.roleId === 'witch' || p.roleId === 'doppelganger') {
+        suspect = p;
+        break;
+      }
+    }
+    if (!suspect) {
+      result = 'no_killer';
+    } else {
+      // Stable per-suspect "hair color" from a small palette so the answer
+      // doesn't change between views in the same round.
+      let hash = 0;
+      for (let i = 0; i < suspect.userId.length; i++) {
+        hash = (hash * 31 + suspect.userId.charCodeAt(i)) >>> 0;
+      }
+      result = TAPE_HAIR_COLORS[hash % TAPE_HAIR_COLORS.length] ?? '#666666';
+    }
+  }
+  const payload: S2CTapeResult = { result };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_TAPE_RESULT,
+    JSON.stringify(payload),
+    [m.sender],
+    null,
+    true,
+  );
+}
+
+/**
+ * Killer-only verb to wipe the tapes. Adjacent monitor required. Once
+ * deleted, all subsequent C2S_TAPE_VIEW return 'deleted'.
+ */
+function handleTapeDelete(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  if (!tilemap.isAdjacentToMonitor(player.x, player.y)) {
+    sendError(dispatcher, m.sender, 'no_monitor', 'must stand next to a security monitor');
+    return;
+  }
+  if (player.roleId !== 'killer' && player.roleId !== 'witch' && player.roleId !== 'doppelganger') {
+    sendError(dispatcher, m.sender, 'wrong_role', 'only the antagonist can delete tapes');
+    return;
+  }
+  state.tapesDeleted = true;
+}
+
+// ---------- shinigami eye deal ----------
+
+/**
+ * Shinigami offers Eyes to an adjacent player who's touched the death note.
+ * Sends an S2C_EYE_OFFER to the target; they reply with C2S_ACCEPT_EYES.
+ */
+function handleOfferEyes(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const sender = state.players[m.sender.userId];
+  if (!sender || !sender.isAlive) return;
+  if (sender.roleId !== 'shinigami') {
+    sendError(dispatcher, m.sender, 'wrong_role', 'only Shinigami can offer Eyes');
+    return;
+  }
+  const req = parseBody<C2SOfferEyes>(m.data);
+  if (!req?.targetUserId) return;
+  const target = state.players[req.targetUserId];
+  if (!target || !target.isAlive || target.userId === sender.userId) return;
+  if (Math.max(Math.abs(target.x - sender.x), Math.abs(target.y - sender.y)) > 5) {
+    sendError(dispatcher, m.sender, 'too_far', 'target out of range');
+    return;
+  }
+  const targetPres = state.presences[target.userId];
+  if (!targetPres) return;
+  state.eyeOffers ??= {};
+  state.eyeOffers[target.userId] = {
+    fromUserId: sender.userId,
+    expiresAtTick: state.tickN + EYE_DEAL_OFFER_TIMEOUT_TICKS,
+  };
+  const payload: S2CEyeOffer = { fromUserId: sender.userId, fromUsername: sender.username };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_EYE_OFFER,
+    JSON.stringify(payload),
+    [targetPres],
+    null,
+    true,
+  );
+}
+
+/**
+ * Target accepts (or declines) a pending eye-deal offer. On accept: HP
+ * halved, shinigamiEyes flag set (sees real names), scheduled death at a
+ * fixed future game minute (DM scaled by the round-start hour, mid-game
+ * accepts get later timers).
+ */
+function handleAcceptEyes(
+  state: PyrceMatchState,
+  m: nkruntime.MatchMessage,
+  dispatcher: nkruntime.MatchDispatcher,
+): void {
+  if (state.phase !== MatchPhase.InGame) return;
+  const player = state.players[m.sender.userId];
+  if (!player || !player.isAlive) return;
+  const req = parseBody<C2SAcceptEyes>(m.data);
+  if (!req) return;
+  const offer = state.eyeOffers?.[player.userId];
+  if (!offer) {
+    sendError(dispatcher, m.sender, 'no_offer', 'no eye-deal offer pending');
+    return;
+  }
+  if (state.eyeOffers) delete state.eyeOffers[player.userId];
+  if (!req.accept) return;
+  player.hp = Math.max(1, Math.floor(player.hp / 2));
+  player.shinigamiEyes = true;
+  broadcastPlayerHealth(dispatcher, player);
+  const pres = state.presences[player.userId];
+  if (pres) sendPlayerHP(dispatcher, pres, player);
+  // Schedule a death some hours later (DM table). Use 6h after the offer
+  // accept for simplicity — feels long enough for the recipient to act on
+  // their new vision before the trade comes due.
+  const deathInMinutes = Math.floor(currentGameMinutes(state) + 6 * 60);
+  state.scheduledEyeDeaths ??= [];
+  state.scheduledEyeDeaths.push({ userId: player.userId, atGameMinute: deathInMinutes });
+  broadcastAnnouncement(dispatcher, {
+    kind: 'mode_event',
+    message: `${player.username} has been visited by a Shinigami.`,
+  });
+}
+
+function currentGameMinutes(state: PyrceMatchState): number {
+  if (!state.clock) return 0;
+  return totalGameMinutes(state.clock, state.tickN, TICK_RATE);
+}
+
 // ---------- voting ----------
 
 function handleVoteMode(
@@ -3128,6 +3464,50 @@ function drainScheduledEffects(
     state.scheduledDeaths = remaining;
   }
 
+  // Eye-deal scheduled deaths — half-life trade comes due. Compares the
+  // victim's atGameMinute to the current game-clock minute.
+  if (state.scheduledEyeDeaths && state.scheduledEyeDeaths.length > 0 && state.clock) {
+    const nowMin = totalGameMinutes(state.clock, tick, TICK_RATE);
+    const remaining: typeof state.scheduledEyeDeaths = [];
+    for (const s of state.scheduledEyeDeaths) {
+      if (nowMin < s.atGameMinute) {
+        remaining.push(s);
+        continue;
+      }
+      const victim = state.players[s.userId];
+      if (!victim || !victim.isAlive) continue;
+      victim.hp = 0;
+      victim.isAlive = false;
+      victim.isWatching = true;
+      const corpse: Corpse = {
+        corpseId: newCorpseId(),
+        victimUserId: victim.userId,
+        victimUsername: victim.username,
+        victimRealName: victim.realName,
+        killerUserId: null,
+        cause: 'Shinigami Eye Deal',
+        x: victim.x,
+        y: victim.y,
+        contents: victim.inventory.items.slice(),
+        discovered: false,
+        discoveredByUserId: null,
+      };
+      victim.inventory = {
+        items: [],
+        hotkeys: [null, null, null, null, null],
+        equipped: null,
+        weight: 0,
+        weightCap: victim.inventory.weightCap,
+      };
+      state.corpses[corpse.corpseId] = corpse;
+      broadcastPlayerDied(dispatcher, victim, null, 'Shinigami Eye Deal');
+      broadcastCorpseUpdate(dispatcher, corpse);
+      broadcastFxSound(dispatcher, 'body_fall', victim.x, victim.y, 0.7);
+      logger.info('eye-deal death: %s', victim.userId);
+    }
+    state.scheduledEyeDeaths = remaining;
+  }
+
   // Witch: revive players whose timer has elapsed.
   if (state.scheduledRevives && state.scheduledRevives.length > 0) {
     const remaining: typeof state.scheduledRevives = [];
@@ -3434,6 +3814,7 @@ function broadcastPlayerMoved(
     tickN: tick,
     equippedItemId: isDisguisedDoppel ? null : (equippedInst?.itemId ?? null),
     equippedItemBloody: !isDisguisedDoppel && equippedInst?.data?.['bloody'] === true,
+    bloody: isDisguisedDoppel ? 0 : (player.bloody ?? 0),
   };
   // Ghost-mode invisibility: when the moved player is a ghost, only the
   // ghost themselves, Whisperers, and the dead see the broadcast (per DM

@@ -15,6 +15,8 @@ import {
   type PublicGroundItem,
   type PublicPlayerInGame,
   type S2CAnnouncement,
+  type S2CBloodDrip,
+  type S2CCameraFeed,
   type S2CClockTick,
   type S2CContainerContents,
   type S2CContainerMoved,
@@ -22,6 +24,7 @@ import {
   type S2CCraftResult,
   type S2CDoorCode,
   type S2CDoorState,
+  type S2CEyeOffer,
   type S2CFxButterfly,
   type S2CFxFeather,
   type S2CFxSmoke,
@@ -32,6 +35,7 @@ import {
   type S2CInitialSnapshot,
   type S2CInvDelta,
   type S2CInvFull,
+  type S2CLightState,
   type S2CPaperReceived,
   type S2CPaperText,
   type S2CPlayerDied,
@@ -46,6 +50,7 @@ import {
   type S2CSearchRequest,
   type S2CSelfRoleState,
   type S2CStudentRoster,
+  type S2CTapeResult,
   type S2CVoteEndGameTally,
   type S2CVoteKickTally,
   type S2CWorldGroundItemDelta,
@@ -132,6 +137,10 @@ export class GameWorld extends Scene {
     Y: Phaser.Input.Keyboard.Key;
     O: Phaser.Input.Keyboard.Key;
     M: Phaser.Input.Keyboard.Key;
+    L: Phaser.Input.Keyboard.Key;
+    J: Phaser.Input.Keyboard.Key;
+    N: Phaser.Input.Keyboard.Key;
+    Z: Phaser.Input.Keyboard.Key;
     ONE: Phaser.Input.Keyboard.Key;
     TWO: Phaser.Input.Keyboard.Key;
     THREE: Phaser.Input.Keyboard.Key;
@@ -152,6 +161,9 @@ export class GameWorld extends Scene {
   }> = [];
   private corpseSprites = new Map<string, CorpseSprite>();
   private deathOverlay?: Phaser.GameObjects.Rectangle;
+  private lightsOff = new Set<string>();
+  private bloodDrips: Phaser.GameObjects.GameObject[] = [];
+  private cameraReturnTimer?: Phaser.Time.TimerEvent;
   private hostUserId: string | null = null;
 
   constructor() {
@@ -202,7 +214,7 @@ export class GameWorld extends Scene {
       ) as typeof this.cursors;
       this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D', false) as typeof this.wasdKeys;
       this.actionKeys = this.input.keyboard.addKeys(
-        'E,F,G,C,I,V,K,B,R,Q,P,H,X,Y,O,M,ONE,TWO,THREE,FOUR,FIVE',
+        'E,F,G,C,I,V,K,B,R,Q,P,H,X,Y,O,M,L,J,N,Z,ONE,TWO,THREE,FOUR,FIVE',
         false,
       ) as typeof this.actionKeys;
       const guard = (fn: () => void) => () => {
@@ -272,6 +284,22 @@ export class GameWorld extends Scene {
       this.actionKeys.M.on(
         'down',
         guard(() => this.handlePlantOnTarget()),
+      );
+      this.actionKeys.L.on(
+        'down',
+        guard(() => this.handleLightSwitch()),
+      );
+      this.actionKeys.J.on(
+        'down',
+        guard(() => void this.match.sendMatch(OpCode.C2S_TAPE_VIEW, {})),
+      );
+      this.actionKeys.N.on(
+        'down',
+        guard(() => this.handleCameraCycle()),
+      );
+      this.actionKeys.Z.on(
+        'down',
+        guard(() => void this.match.sendMatch(OpCode.C2S_TAPE_DELETE, {})),
       );
       this.actionKeys.ONE.on(
         'down',
@@ -923,6 +951,36 @@ export class GameWorld extends Scene {
     return best?.id ?? null;
   }
 
+  private handleLightSwitch(): void {
+    const me = this.players.get(this.match.userId)?.state;
+    if (!me) return;
+    let best: { tag: string; dist: number } | null = null;
+    for (const sw of this.map.lightSwitches ?? []) {
+      const dist = Math.max(Math.abs(sw.x - me.x), Math.abs(sw.y - me.y));
+      if (dist > 1) continue;
+      if (!best || dist < best.dist) best = { tag: sw.tag, dist };
+    }
+    if (!best) {
+      this.notifyHud('No light switch adjacent');
+      return;
+    }
+    void this.match.sendMatch(OpCode.C2S_LIGHT_SWITCH_TOGGLE, { tag: best.tag });
+  }
+
+  private cameraCycleIdx = 0;
+  private handleCameraCycle(): void {
+    const cams = this.map.cameras ?? [];
+    if (cams.length === 0) {
+      this.notifyHud('No cameras on this floor');
+      return;
+    }
+    const cam = cams[this.cameraCycleIdx % cams.length];
+    this.cameraCycleIdx++;
+    if (!cam) return;
+    void this.match.sendMatch(OpCode.C2S_CAMERA_VIEW, { tag: cam.tag });
+    this.notifyHud(`Camera: ${cam.tag}`);
+  }
+
   private handlePushContainer(): void {
     const me = this.players.get(this.match.userId)?.state;
     if (!me) return;
@@ -1098,11 +1156,13 @@ export class GameWorld extends Scene {
             isAlive: true,
             equippedItemId: m.equippedItemId,
             equippedItemBloody: m.equippedItemBloody,
+            bloody: m.bloody ?? 0,
           });
           return;
         }
         this.moveSprite(sprite, m.x, m.y, m.facing);
         this.updateEquippedSprite(sprite, m.equippedItemId, m.equippedItemBloody);
+        this.applyBloodyTint(sprite, m.bloody ?? 0);
         break;
       }
       case OpCode.S2C_INITIAL_SNAPSHOT: {
@@ -1187,6 +1247,41 @@ export class GameWorld extends Scene {
         const r = parsePayload<S2CCraftResult>(data);
         if (!r) return;
         this.notifyHud(r.ok ? `crafted ${r.recipeId}` : `craft failed: ${r.error}`);
+        break;
+      }
+      case OpCode.S2C_LIGHT_STATE: {
+        const l = parsePayload<S2CLightState>(data);
+        if (!l) return;
+        this.lightsOff = new Set(l.offTags);
+        this.refreshLightOverlays();
+        break;
+      }
+      case OpCode.S2C_BLOOD_DRIP: {
+        const d = parsePayload<S2CBloodDrip>(data);
+        if (!d) return;
+        this.spawnBloodDrip(d.x, d.y, d.intensity);
+        break;
+      }
+      case OpCode.S2C_CAMERA_FEED: {
+        const f = parsePayload<S2CCameraFeed>(data);
+        if (!f) return;
+        this.peekCamera(f.x, f.y, f.durationMs);
+        break;
+      }
+      case OpCode.S2C_TAPE_RESULT: {
+        const t = parsePayload<S2CTapeResult>(data);
+        if (!t) return;
+        const r = t.result;
+        if (r === 'deleted') this.notifyHud('Tapes have been deleted...');
+        else if (r === 'wrong_mode') this.notifyHud('No useful evidence on these tapes.');
+        else if (r === 'no_killer') this.notifyHud('Tapes show nothing remarkable.');
+        else this.showTapeHairColor(r);
+        break;
+      }
+      case OpCode.S2C_EYE_OFFER: {
+        const o = parsePayload<S2CEyeOffer>(data);
+        if (!o) return;
+        this.openEyeOfferDialog(o.fromUsername);
         break;
       }
       case OpCode.S2C_PLAYER_HEALTH: {
@@ -1393,6 +1488,127 @@ export class GameWorld extends Scene {
 
   private notifyHud(msg: string): void {
     this.scene.get('Hud').events.emit('inv:notify', msg);
+  }
+
+  /**
+   * Refresh the dim overlay covering each lights-off area. Each tagged
+   * light tile in the tilemap gets a 5-tile-radius dark patch when its
+   * tag is in the off-set.
+   */
+  private lightOverlayByTag = new Map<string, Phaser.GameObjects.GameObject[]>();
+  private refreshLightOverlays(): void {
+    // Clear all existing overlays.
+    for (const [, gos] of this.lightOverlayByTag) {
+      for (const g of gos) g.destroy();
+    }
+    this.lightOverlayByTag.clear();
+    if (this.lightsOff.size === 0) return;
+    for (const tag of this.lightsOff) {
+      const overlays: Phaser.GameObjects.GameObject[] = [];
+      for (const l of this.map.lights ?? []) {
+        if (l.tag !== tag) continue;
+        const cx = l.x * TILE + TILE / 2;
+        const cy = l.y * TILE + TILE / 2;
+        const dim = this.add.rectangle(cx, cy, TILE * 11, TILE * 11, 0x000000, 0.55).setDepth(900);
+        overlays.push(dim);
+      }
+      this.lightOverlayByTag.set(tag, overlays);
+    }
+  }
+
+  /**
+   * Tint the player sprite based on bloody count: 0 = none, 1-5 = light
+   * red wash, 6+ = "very bloody" dark red. DM Weapons Attacks.dm tier.
+   */
+  private applyBloodyTint(sprite: PlayerSprite, bloody: number): void {
+    if (bloody <= 0) {
+      sprite.rect.clearTint?.();
+      return;
+    }
+    const color = bloody >= 6 ? 0x882222 : 0xcc7777;
+    sprite.rect.setTint?.(color);
+  }
+
+  /** Render a small drop on a tile that fades over a few seconds. */
+  private spawnBloodDrip(x: number, y: number, intensity: number): void {
+    const wx = x * TILE + TILE / 2;
+    const wy = y * TILE + TILE / 2;
+    const r = Math.min(8, 3 + intensity);
+    const drip = this.add.circle(wx, wy, r, 0x661111, 0.7).setDepth(2);
+    this.bloodDrips.push(drip);
+    this.tweens.add({
+      targets: drip,
+      alpha: 0,
+      duration: 30000,
+      onComplete: () => drip.destroy(),
+    });
+    // Cap the drip count to avoid runaway memory.
+    while (this.bloodDrips.length > 200) {
+      const old = this.bloodDrips.shift();
+      old?.destroy();
+    }
+  }
+
+  /** Pan the camera to (x,y) for `durationMs`, then snap back to the player. */
+  private peekCamera(x: number, y: number, durationMs: number): void {
+    const wx = x * TILE + TILE / 2;
+    const wy = y * TILE + TILE / 2;
+    this.cameras.main.stopFollow();
+    this.cameras.main.pan(wx, wy, 250);
+    this.cameraReturnTimer?.remove();
+    this.cameraReturnTimer = this.time.delayedCall(durationMs, () => {
+      const me = this.players.get(this.match.userId);
+      if (me) this.cameras.main.startFollow(me.rect, true, 0.1, 0.1);
+    });
+  }
+
+  /** Show a small "tape evidence" modal with the killer's hair-color swatch. */
+  private showTapeHairColor(hex: string): void {
+    const parent = this.game.canvas.parentElement;
+    if (!parent) return;
+    const box = document.createElement('div');
+    box.style.cssText =
+      'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.92);border:2px solid #88aaff;padding:18px 24px;z-index:2400;color:#ffffff;font-family:Courier New,monospace;text-align:center';
+    box.innerHTML = `<div style="margin-bottom:10px;color:#ffd866">Tape Review</div><div>The footage is blurry, but the suspect's hair appears to be:</div><div style="width:64px;height:64px;background:${hex};margin:14px auto;border:2px solid #88aaff"></div>`;
+    const close = document.createElement('button');
+    close.textContent = 'Close';
+    close.style.cssText =
+      'padding:6px 16px;cursor:pointer;background:#223344;color:#ffffff;border:1px solid #88aaff';
+    close.addEventListener('click', () => box.remove());
+    box.appendChild(close);
+    parent.appendChild(box);
+    setTimeout(() => box.parentElement && box.remove(), 30000);
+  }
+
+  /** Yes/No modal for the Shinigami eye-deal offer. */
+  private openEyeOfferDialog(fromUsername: string): void {
+    const parent = this.game.canvas.parentElement;
+    if (!parent) return;
+    const box = document.createElement('div');
+    box.style.cssText =
+      'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.92);border:2px solid #ff8866;padding:18px 24px;z-index:2400;color:#ffffff;font-family:Courier New,monospace;max-width:420px;text-align:center';
+    box.innerHTML = `<div style="margin-bottom:10px;color:#ffaa66">Shinigami's Offer</div><div>${fromUsername} offers you the Shinigami Eyes — you'll see everyone's true names, but trade away half your remaining life.</div><div style="margin-top:14px;display:flex;gap:14px;justify-content:center"></div>`;
+    const buttons = box.lastElementChild as HTMLDivElement;
+    const yes = document.createElement('button');
+    yes.textContent = 'Accept';
+    yes.style.cssText =
+      'padding:6px 16px;cursor:pointer;background:#553311;color:#ffffff;border:1px solid #ff8866';
+    yes.addEventListener('click', () => {
+      void this.match.sendMatch(OpCode.C2S_ACCEPT_EYES, { accept: true });
+      box.remove();
+    });
+    const no = document.createElement('button');
+    no.textContent = 'Decline';
+    no.style.cssText =
+      'padding:6px 16px;cursor:pointer;background:#223344;color:#ffffff;border:1px solid #88aaff';
+    no.addEventListener('click', () => {
+      void this.match.sendMatch(OpCode.C2S_ACCEPT_EYES, { accept: false });
+      box.remove();
+    });
+    buttons.appendChild(yes);
+    buttons.appendChild(no);
+    parent.appendChild(box);
+    setTimeout(() => box.parentElement && box.remove(), 30000);
   }
 
   // ---------- rendering helpers ----------
@@ -1614,6 +1830,7 @@ export class GameWorld extends Scene {
     }
     this.players.set(p.userId, sprite);
     this.updateHpBar(sprite);
+    this.applyBloodyTint(sprite, p.bloody ?? 0);
     if (p.equippedItemId) {
       this.updateEquippedSprite(sprite, p.equippedItemId, p.equippedItemBloody);
     }

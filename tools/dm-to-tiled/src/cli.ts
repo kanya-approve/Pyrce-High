@@ -10,13 +10,19 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { objectsOf, parseDmm, turfOf } from './parse.js';
+import { objectsWithOverridesOf, parseDmm, turfOf } from './parse.js';
 import {
   classifyTurf,
+  objectIsCamera,
   objectIsContainer,
   objectIsDoor,
+  objectIsFuseBox,
+  objectIsLight,
+  objectIsLightSwitch,
+  objectIsMonitor,
   objectIsSpawn,
   objectIsVending,
+  objectIsWarp,
   spawnIdOf,
   type TurfCategory,
 } from './passability.js';
@@ -50,6 +56,46 @@ interface VendingPoint {
   y: number;
 }
 
+interface WarpPoint {
+  x: number;
+  y: number;
+  /** Warp tag (matching pairs share a tag). */
+  tag: string;
+  /** True if this warp only sends (no incoming). */
+  oneway: boolean;
+}
+
+interface CameraPoint {
+  x: number;
+  y: number;
+  /** Tag identifies this camera in the security room. */
+  tag: string;
+}
+
+interface MonitorPoint {
+  x: number;
+  y: number;
+}
+
+interface LightSwitchPoint {
+  x: number;
+  y: number;
+  /** Tag groups which lights this switch toggles. */
+  tag: string;
+}
+
+interface LightPoint {
+  x: number;
+  y: number;
+  /** Tag matches a light switch's tag. */
+  tag: string;
+}
+
+interface FuseBoxPoint {
+  x: number;
+  y: number;
+}
+
 interface TilemapJson {
   schemaVersion: 1;
   source: string;
@@ -63,6 +109,12 @@ interface TilemapJson {
   doors: DoorPoint[];
   containers: ContainerPoint[];
   vendings: VendingPoint[];
+  warps: WarpPoint[];
+  cameras: CameraPoint[];
+  monitors: MonitorPoint[];
+  lightSwitches: LightSwitchPoint[];
+  lights: LightPoint[];
+  fuseBoxes: FuseBoxPoint[];
 }
 
 function main(): void {
@@ -112,6 +164,12 @@ function main(): void {
   const doors: DoorPoint[] = [];
   const containers: ContainerPoint[] = [];
   const vendings: VendingPoint[] = [];
+  const warps: WarpPoint[] = [];
+  const cameras: CameraPoint[] = [];
+  const monitors: MonitorPoint[] = [];
+  const lightSwitches: LightSwitchPoint[] = [];
+  const lights: LightPoint[] = [];
+  const fuseBoxes: FuseBoxPoint[] = [];
 
   for (let y = 0; y < block.height; y++) {
     const row = block.rows[y] ?? [];
@@ -125,17 +183,33 @@ function main(): void {
       }
       const turf = turfOf(entry);
       gridRow[x] = indexFor(turf);
-      // Walk the entry's objects for spawns / doors / containers.
-      for (const obj of objectsOf(entry)) {
-        if (objectIsSpawn(obj)) {
-          const id = spawnIdOf(obj);
+      // Walk the entry's objects for spawns / doors / containers / warps / etc.
+      for (const { path, overrides } of objectsWithOverridesOf(entry)) {
+        if (objectIsSpawn(path)) {
+          const id = spawnIdOf(path);
           if (id) spawns.push({ id, x, y });
-        } else if (objectIsDoor(obj)) {
-          doors.push({ kind: obj, x, y });
-        } else if (objectIsContainer(obj)) {
-          containers.push({ kind: obj, x, y });
-        } else if (objectIsVending(obj)) {
-          vendings.push({ kind: obj, x, y });
+        } else if (objectIsDoor(path)) {
+          doors.push({ kind: path, x, y });
+        } else if (objectIsContainer(path)) {
+          containers.push({ kind: path, x, y });
+        } else if (objectIsVending(path)) {
+          vendings.push({ kind: path, x, y });
+        } else if (objectIsWarp(path)) {
+          const tag = overrides.tag ?? '';
+          if (tag) warps.push({ x, y, tag, oneway: overrides.oneway === '1' });
+        } else if (objectIsCamera(path)) {
+          const tag = overrides.tag ?? `camera-${cameras.length}`;
+          cameras.push({ x, y, tag });
+        } else if (objectIsMonitor(path)) {
+          monitors.push({ x, y });
+        } else if (objectIsLightSwitch(path)) {
+          const tag = overrides.tag ?? `switch-${lightSwitches.length}`;
+          lightSwitches.push({ x, y, tag });
+        } else if (objectIsFuseBox(path)) {
+          fuseBoxes.push({ x, y });
+        } else if (objectIsLight(path)) {
+          const tag = overrides.tag ?? `light-${lights.length}`;
+          lights.push({ x, y, tag });
         }
       }
     }
@@ -154,6 +228,12 @@ function main(): void {
     doors,
     containers,
     vendings,
+    warps,
+    cameras,
+    monitors,
+    lightSwitches,
+    lights,
+    fuseBoxes,
   };
 
   // Sanity: the spawns we expect (One..Twentytwo + Watcher + ShiniSpawn).
@@ -189,6 +269,12 @@ function main(): void {
   console.log(`spawns: ${spawns.length} (${expected.length} player + 2 special expected)`);
   console.log(`doors:  ${doors.length}`);
   console.log(`containers: ${containers.length}`);
+  console.log(`warps: ${warps.length}`);
+  console.log(`cameras: ${cameras.length}`);
+  console.log(`monitors: ${monitors.length}`);
+  console.log(
+    `lightSwitches: ${lightSwitches.length}, lights: ${lights.length}, fuseBoxes: ${fuseBoxes.length}`,
+  );
   console.log(`tile types: ${tileTypes.length}`);
   console.log(`grid: ${block.width} x ${block.height} at z=${zLevel}`);
 

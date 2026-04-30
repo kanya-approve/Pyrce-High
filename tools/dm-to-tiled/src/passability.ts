@@ -71,3 +71,27 @@ export function spawnIdOf(path: string): string | null {
   const m = /\/obj\/Spawns\/([A-Za-z0-9_]+)/.exec(path);
   return m?.[1] ? m[1] : null;
 }
+
+export function objectIsWarp(path: string): boolean {
+  return path === '/obj/Warp' || path.startsWith('/obj/Warp/');
+}
+
+export function objectIsCamera(path: string): boolean {
+  return path.startsWith('/obj/Cameras/Camera');
+}
+
+export function objectIsMonitor(path: string): boolean {
+  return path.startsWith('/obj/Cameras/Monitor');
+}
+
+export function objectIsLightSwitch(path: string): boolean {
+  return path === '/obj/Switch_For_Lights' || path.startsWith('/obj/Switch_For_Lights/');
+}
+
+export function objectIsFuseBox(path: string): boolean {
+  return path === '/obj/Fuse_Box' || path.startsWith('/obj/Fuse_Box/');
+}
+
+export function objectIsLight(path: string): boolean {
+  return path === '/obj/Lights' || path.startsWith('/obj/Lights/');
+}

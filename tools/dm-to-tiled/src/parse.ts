@@ -210,3 +210,17 @@ export function objectsOf(entry: DictEntry): string[] {
   }
   return out;
 }
+
+/** Same as `objectsOf` but pairs each /obj path with its inline override map. */
+export function objectsWithOverridesOf(
+  entry: DictEntry,
+): Array<{ path: string; overrides: Record<string, string> }> {
+  const out: Array<{ path: string; overrides: Record<string, string> }> = [];
+  for (let i = 0; i < entry.paths.length; i++) {
+    const p = entry.paths[i] ?? '';
+    if (p.startsWith('/obj')) {
+      out.push({ path: p, overrides: entry.overrides[i] ?? {} });
+    }
+  }
+  return out;
+}

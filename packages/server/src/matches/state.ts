@@ -44,6 +44,10 @@ export interface PlayerInGame {
   hasEscaped?: boolean;
   /** Classroom assigned at game start ('A1', 'A2', 'B1', ...). Null until the player is placed. */
   classroom?: string;
+  /** Number of kills landed; 0..8. Drives the bloody-overlay tier on the public sprite. */
+  bloody?: number;
+  /** Death Note: this player accepted the Shinigami Eyes deal — sees real names. */
+  shinigamiEyes?: boolean;
   /** True name for body-discovery messaging — leak-safe; only revealed on death. */
   realName: string;
   inventory: InventoryState;
@@ -212,6 +216,18 @@ export interface PyrceMatchState {
    * revealed in the end-game results.
    */
   secretActualModeId?: string;
+
+  /** Set of light-switch tags currently switched OFF. Drives darkness areas. */
+  lightsOff?: { [tag: string]: true };
+
+  /** True once a killer has used Delete_Tapes on a Monitor. */
+  tapesDeleted?: boolean;
+
+  /** Pending eye-deal offers: targetUserId → shinigami offerer userId. */
+  eyeOffers?: { [targetUserId: string]: { fromUserId: string; expiresAtTick: number } };
+
+  /** Schedule of eye-deal deaths: { victimUserId, atGameMinute }. */
+  scheduledEyeDeaths?: Array<{ userId: string; atGameMinute: number }>;
 }
 
 /** Build a fresh PlayerInGame, including a deep copy of the empty inventory. */
@@ -303,5 +319,9 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
     equippedItemBloody: !hideEquipped && equippedInst?.data?.['bloody'] === true,
     ...(disguiseAs ? { disguiseAsUserId: disguiseAs } : {}),
     ...(disguiseUsername ? { disguiseUsername } : {}),
+    // Doppelganger-disguised hides the bloody tier too — otherwise a kill
+    // count is a giveaway. Standard players publish their bloody level so
+    // onlookers see the visual overlay tier.
+    bloody: hideEquipped ? 0 : (p.bloody ?? 0),
   };
 }

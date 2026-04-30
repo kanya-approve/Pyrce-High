@@ -40,6 +40,46 @@ export interface VendingPoint {
   y: number;
 }
 
+export interface WarpPoint {
+  x: number;
+  y: number;
+  /** Warp tag — matching pairs share a tag. Stepping on one teleports
+   *  to the OTHER warp with the same tag. */
+  tag: string;
+  /** True if this warp only sends (no incoming). */
+  oneway: boolean;
+}
+
+export interface CameraPoint {
+  x: number;
+  y: number;
+  tag: string;
+}
+
+export interface MonitorPoint {
+  x: number;
+  y: number;
+}
+
+export interface LightSwitchPoint {
+  x: number;
+  y: number;
+  /** Tag matches the lights this switch controls. */
+  tag: string;
+}
+
+export interface LightPoint {
+  x: number;
+  y: number;
+  /** Tag matches a light switch's tag. */
+  tag: string;
+}
+
+export interface FuseBoxPoint {
+  x: number;
+  y: number;
+}
+
 export interface TilemapJson {
   schemaVersion: 1;
   source: string;
@@ -54,6 +94,18 @@ export interface TilemapJson {
   containers: ContainerPoint[];
   /** Vending machines: spend yen for a soda. */
   vendings?: VendingPoint[];
+  /** Warp tiles: vent drops, stair teleports, secret passages. */
+  warps?: WarpPoint[];
+  /** Security cameras placed in named areas. */
+  cameras?: CameraPoint[];
+  /** Security monitors that view a chosen camera. */
+  monitors?: MonitorPoint[];
+  /** Light switches: per-area light toggles. */
+  lightSwitches?: LightSwitchPoint[];
+  /** Light fixtures controlled by switches. */
+  lights?: LightPoint[];
+  /** Fuse box: cut power to many switches at once. */
+  fuseBoxes?: FuseBoxPoint[];
 }
 
 /** Stable IDs for the seven directions we care about. */
