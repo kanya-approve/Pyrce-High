@@ -1,0 +1,53 @@
+{{- /*
+  Agones Fleet for the Pyrce dedicated game-server pool. Nakama claims a
+  Ready GameServer from this fleet via the Allocator API per match. The
+  Agones operator must be installed cluster-wide first — see
+  infra/helm/README.md.
+*/ -}}
+{{- with .Values.agones -}}
+{{- if .enabled }}
+apiVersion: agones.dev/v1
+kind: Fleet
+metadata:
+  name: {{ .fleet.name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  replicas: {{ .fleet.replicas }}
+  template:
+    metadata:
+      labels:
+        game: {{ .fleet.name }}
+    spec:
+      ports:
+        - name: game
+          portPolicy: Dynamic
+          containerPort: {{ .fleet.containerPort }}
+          protocol: TCP
+      health:
+        initialDelaySeconds: {{ .fleet.health.initialDelaySeconds }}
+        periodSeconds: {{ .fleet.health.periodSeconds }}
+        failureThreshold: {{ .fleet.health.failureThreshold }}
+      sdkServer:
+        logLevel: Info
+        grpcPort: 9357
+        httpPort: 9358
+      template:
+        spec:
+          containers:
+            - name: pyrce-game-server
+              image: {{ .fleet.image.repository }}:{{ .fleet.image.tag }}
+              imagePullPolicy: {{ .fleet.image.pullPolicy }}
+              env:
+                {{- range $k, $v := .fleet.env }}
+                - name: {{ $k }}
+                  value: {{ $v | quote }}
+                {{- end }}
+              resources:
+                requests:
+                  cpu: {{ .fleet.resources.requests.cpu }}
+                  memory: {{ .fleet.resources.requests.memory }}
+                limits:
+                  cpu: {{ .fleet.resources.limits.cpu }}
+                  memory: {{ .fleet.resources.limits.memory }}
+{{- end }}
+{{- end }}

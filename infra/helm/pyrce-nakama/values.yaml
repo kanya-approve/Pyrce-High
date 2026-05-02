@@ -155,7 +155,10 @@ postgres:
   name: pyrce-pg
   database: nakama
   owner: nakama
-  instances: 3
+  # Single instance is enough for a dev/small-prod deployment. For HA in
+  # prod, bump to 3 — CNPG handles synchronous replication and failover
+  # automatically when instances >= 2. (Also worth bumping resources.)
+  instances: 1
   storage:
     size: 20Gi
     # storageClass: leave empty to use the cluster default; override per-env
@@ -169,3 +172,38 @@ postgres:
       memory: 1Gi
   monitoring:
     enablePodMonitor: false
+
+# Agones Fleet — pool of dedicated game-server pods. Nakama allocates one
+# per match via the Allocator API. The Agones operator must already be
+# installed cluster-wide (see infra/helm/README.md).
+agones:
+  enabled: true
+  fleet:
+    name: pyrce
+    replicas: 2
+    image:
+      repository: ghcr.io/kanya-approve/pyrce-game-server
+      tag: latest
+      pullPolicy: IfNotPresent
+    containerPort: 7777
+    health:
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      failureThreshold: 3
+    env:
+      GAME_PORT: '7777'
+      HEALTH_INTERVAL_MS: '2000'
+      ROUND_TIMEOUT_S: '1800'
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+  autoscaler:
+    enabled: true
+    name: pyrce-buffer
+    bufferSize: 2
+    minReplicas: 2
+    maxReplicas: 50

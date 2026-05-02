@@ -1,0 +1,22 @@
+{{- /*
+  Buffer-based autoscaler: keep N spare Ready GameServers ahead of demand.
+  When Allocated rate exceeds the buffer, Agones provisions more pods;
+  when idle, it scales the pool back down to minReplicas.
+*/ -}}
+{{- with .Values.agones -}}
+{{- if and .enabled .autoscaler.enabled }}
+apiVersion: autoscaling.agones.dev/v1
+kind: FleetAutoscaler
+metadata:
+  name: {{ .autoscaler.name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  fleetName: {{ .fleet.name }}
+  policy:
+    type: Buffer
+    buffer:
+      bufferSize: {{ .autoscaler.bufferSize }}
+      minReplicas: {{ .autoscaler.minReplicas }}
+      maxReplicas: {{ .autoscaler.maxReplicas }}
+{{- end }}
+{{- end }}
