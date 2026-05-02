@@ -6,6 +6,7 @@ import {
   type MatchPhase,
   type PublicPlayerInGame,
   type RoleId,
+  rollDemographics,
 } from '@pyrce/shared';
 import type { InGameClock } from '../mode.js';
 import type { ContainerInstance } from '../world/containers.js';
@@ -25,7 +26,14 @@ export const BLEEDING_WEAPONS: readonly string[] = ['knife', 'billhook', 'axe', 
 
 export interface PlayerInGame {
   userId: string;
+  /** Nakama account username — used for chat-system fallback only; never
+   *  shown to other players (we expose `displayName` instead). */
   username: string;
+  /** Anonymous label other players see — "Male with brown hair". */
+  displayName: string;
+  gender: 'male' | 'female';
+  hairId: string;
+  hairColor: string;
   x: number;
   y: number;
   facing: Facing;
@@ -71,8 +79,12 @@ export interface PlayerInGame {
 export interface Corpse {
   corpseId: string;
   victimUserId: string;
-  victimUsername: string;
+  /** Anonymous label ("Male with brown hair") shown until the body is identified. */
+  victimDisplayName: string;
+  /** Real name revealed only after a search / search-consent flow. */
   victimRealName: string;
+  /** Hair overlay id used by Doppelganger when copying this corpse. */
+  victimHairId: string;
   killerUserId: string | null;
   cause: string;
   x: number;
@@ -100,6 +112,13 @@ export interface PyrceMatchState {
 
   /** userId -> presence; populated in matchJoin, removed in matchLeave. */
   presences: { [userId: string]: nkruntime.Presence };
+
+  /**
+   * userId -> demographics rolled at first lobby join. Persists for the
+   * lifetime of the match so the lobby UI can show "Male with brown hair"
+   * before the round starts. Carried into PlayerInGame at game start.
+   */
+  lobbyDemographics: { [userId: string]: import('@pyrce/shared').Demographics };
 
   /** userId -> in-game state. Populated when phase enters InGame. */
   players: { [userId: string]: PlayerInGame };
@@ -136,6 +155,12 @@ export interface PyrceMatchState {
 
   /** In-round end-game votes: set of userIds who've voted yes. */
   endGameVotes?: { [userId: string]: true };
+
+  /**
+   * Tick at which the round-over screen finishes and the match auto-resets
+   * back to Lobby phase. Set when phase enters Ending; drained in matchLoop.
+   */
+  endingResetAtTick?: number;
 
   /**
    * Vote-kick: `kickVotes[targetUserId][voterUserId] = true`. When >50% of
@@ -230,16 +255,26 @@ export interface PyrceMatchState {
   scheduledEyeDeaths?: Array<{ userId: string; atGameMinute: number }>;
 }
 
-/** Build a fresh PlayerInGame, including a deep copy of the empty inventory. */
+/**
+ * Build a fresh PlayerInGame. Demographics are normally rolled at first
+ * lobby join (in matchJoin) and re-used here; pass `demo` from
+ * `state.lobbyDemographics[userId]`. If omitted (e.g. tests, watcher
+ * fallback), a fresh roll happens.
+ */
 export function newPlayerInGame(
   userId: string,
   username: string,
   x: number,
   y: number,
+  demo: import('@pyrce/shared').Demographics = rollDemographics(),
 ): PlayerInGame {
   return {
     userId,
     username,
+    displayName: demo.displayName,
+    gender: demo.gender,
+    hairId: demo.hairId,
+    hairColor: demo.hairColor,
     x,
     y,
     facing: 'S',
@@ -251,7 +286,7 @@ export function newPlayerInGame(
     maxStamina: 100,
     isAlive: true,
     isWatching: false,
-    realName: username, // M5.x may override with role-assigned realname
+    realName: demo.realName,
     inventory: {
       items: [],
       hotkeys: [null, null, null, null, null],
@@ -264,6 +299,22 @@ export function newPlayerInGame(
   };
 }
 
+/**
+ * Mutate a single player slot via whole-object replacement. Goja's state
+ * proxy reliably commits assignments to top-level map slots; nested
+ * mutations like `p.x = nx` or `p.inventory = inv` can be lost across
+ * ticks. Use this anywhere you'd otherwise reach into `state.players[uid]`.
+ */
+export function updatePlayer(
+  state: PyrceMatchState,
+  userId: string,
+  patch: Partial<PlayerInGame>,
+): void {
+  const p = state.players[userId];
+  if (!p) return;
+  state.players[userId] = { ...p, ...patch };
+}
+
 export const TICK_RATE = 10; // Hz
 export const MAX_PLAYERS = 22;
 export const EMPTY_GRACE_TICKS = TICK_RATE * 30; // dispose after 30s of emptiness
@@ -271,12 +322,11 @@ export const EMPTY_GRACE_TICKS = TICK_RATE * 30; // dispose after 30s of emptine
 export const RECONNECT_GRACE_TICKS = TICK_RATE * 60;
 
 /**
- * Move cooldown in ticks. At 10Hz, 1 tick = 100ms. We allow 1 tile-step
- * per ~150ms which gives a smooth-but-deliberate walking pace and stops
- * key-mash spam. Set deliberately above the 100ms tick floor so it's
- * always at least 2 ticks between moves.
+ * Move cooldown in ticks. At 10Hz, 1 tick = 100ms. One step per tick gives
+ * a fluid walking cadence; client tween (~110ms) chains cleanly into the
+ * next step without an idle gap. Sprint halves it; sedative doubles it.
  */
-export const MOVE_COOLDOWN_TICKS = 2;
+export const MOVE_COOLDOWN_TICKS = 1;
 
 export function buildLabel(state: PyrceMatchState, protocol: string): MatchLabel {
   return {
@@ -300,7 +350,8 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
     ? p.inventory.items.find((i) => i.instanceId === p.inventory.equipped)
     : null;
   const disguiseAs = p.roleData?.['disguiseAsUserId'] as string | undefined;
-  const disguiseUsername = p.roleData?.['disguiseUsername'] as string | undefined;
+  const disguiseDisplayName = p.roleData?.['disguiseDisplayName'] as string | undefined;
+  const disguiseHairId = p.roleData?.['disguiseHairId'] as string | undefined;
   // Doppelganger weapon-hide: while disguised, the equipped item is
   // suppressed in the public view so the disguise isn't trivially blown
   // by a visible knife sprite. Self-targeted broadcasts use a different
@@ -308,7 +359,10 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
   const hideEquipped = p.roleId === 'doppelganger' && !!disguiseAs;
   return {
     userId: p.userId,
-    username: p.username,
+    displayName: p.displayName,
+    gender: p.gender,
+    hairId: p.hairId,
+    hairColor: p.hairColor,
     x: p.x,
     y: p.y,
     facing: p.facing,
@@ -318,7 +372,8 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
     equippedItemId: hideEquipped ? null : (equippedInst?.itemId ?? null),
     equippedItemBloody: !hideEquipped && equippedInst?.data?.['bloody'] === true,
     ...(disguiseAs ? { disguiseAsUserId: disguiseAs } : {}),
-    ...(disguiseUsername ? { disguiseUsername } : {}),
+    ...(disguiseDisplayName ? { disguiseDisplayName } : {}),
+    ...(disguiseHairId ? { disguiseHairId } : {}),
     // Doppelganger-disguised hides the bloody tier too — otherwise a kill
     // count is a giveaway. Standard players publish their bloody level so
     // onlookers see the visual overlay tier.

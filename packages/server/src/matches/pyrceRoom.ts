@@ -101,6 +101,9 @@ import {
   type S2CVoteModeTally,
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
+  rollDemographics,
+  rollUniqueDemographics,
+  type S2CLobbyState,
   WIRE_PROTOCOL_VERSION,
 } from '@pyrce/shared';
 import { routeChat, sanitizeChatBody } from '../chat.js';
@@ -133,6 +136,7 @@ import {
   RECONNECT_GRACE_TICKS,
   TICK_RATE,
   toPublicPlayerInGame,
+  updatePlayer,
 } from './state.js';
 
 /** Stamina regen runs every Nth tick (cheap, but no need to do it every tick). */
@@ -160,6 +164,7 @@ export function matchInit(
     gameModeId: p?.gameModeId ?? null,
     phase: MatchPhase.Lobby,
     presences: {},
+    lobbyDemographics: {},
     players: {},
     groundItems: {},
     containers: {},
@@ -210,6 +215,13 @@ export function matchJoin(
 ): { state: PyrceMatchState } {
   for (const p of presences) {
     state.presences[p.userId] = p;
+    // First time we see this user this match: roll their demographics so
+    // the lobby UI can already show "Male with brown hair".
+    if (!state.lobbyDemographics[p.userId]) {
+      state.lobbyDemographics[p.userId] = rollUniqueDemographics(
+        Object.values(state.lobbyDemographics),
+      );
+    }
     // Re-joining player: clear the disconnect timer so they're safe again.
     const player = state.players[p.userId];
     if (player?.disconnectedAtTick !== undefined) {
@@ -225,6 +237,7 @@ export function matchJoin(
   }
   state.tickN_lastNonEmpty = tick;
   refreshLabel(dispatcher, state);
+  broadcastLobbyState(dispatcher, state);
   return { state };
 }
 
@@ -241,6 +254,7 @@ export function matchLeave(
     delete state.presences[p.userId];
     if (state.phase === MatchPhase.Lobby) {
       delete state.players[p.userId];
+      delete state.lobbyDemographics[p.userId];
     } else if (state.phase === MatchPhase.InGame) {
       // Stamp the disconnect tick. matchLoop kills the player if they're
       // still gone after RECONNECT_GRACE_TICKS so the round can resolve.
@@ -250,6 +264,7 @@ export function matchLeave(
     logger.info('match leave (phase=%s): user=%s', state.phase, p.userId);
   }
   refreshLabel(dispatcher, state);
+  broadcastLobbyState(dispatcher, state);
   return { state };
 }
 
@@ -271,6 +286,15 @@ export function matchLoop(
 
   for (const m of messages) {
     handleMessage(state, m, tick, dispatcher, logger);
+  }
+
+  // Auto-return everyone to the lobby a few seconds after the round ends.
+  if (
+    state.phase === MatchPhase.Ending &&
+    state.endingResetAtTick !== undefined &&
+    tick >= state.endingResetAtTick
+  ) {
+    resetToLobby(state, dispatcher, logger);
   }
 
   // Mode-script per-tick scheduler drain (death-note kills, witch revives,
@@ -298,7 +322,7 @@ export function matchLoop(
       if (p.hp <= 20 && p.hp > 18) {
         broadcastAnnouncement(dispatcher, {
           kind: 'mode_event',
-          message: `${p.username} looks pale and weak.`,
+          message: `${p.displayName} looks pale and weak.`,
         });
       }
     }
@@ -371,7 +395,8 @@ export function matchLoop(
         const corpse: Corpse = {
           corpseId: newCorpseId(),
           victimUserId: p.userId,
-          victimUsername: p.username,
+          victimDisplayName: p.displayName,
+          victimHairId: p.hairId,
           victimRealName: p.realName,
           killerUserId: null,
           cause: 'Bled out',
@@ -381,13 +406,13 @@ export function matchLoop(
           discovered: false,
           discoveredByUserId: null,
         };
-        p.inventory = {
+        updatePlayer(state, p.userId, { inventory: {
           items: [],
           hotkeys: [null, null, null, null, null],
           equipped: null,
           weight: 0,
           weightCap: p.inventory.weightCap,
-        };
+        } });
         state.corpses[corpse.corpseId] = corpse;
         broadcastPlayerDied(dispatcher, p, null, 'Bled out');
         broadcastCorpseUpdate(dispatcher, corpse);
@@ -424,9 +449,9 @@ export function matchLoop(
       const dist = Math.max(Math.abs(corpse.x - dragger.x), Math.abs(corpse.y - dragger.y));
       if (dist > 1) {
         // Snap corpse to within 1 tile (place behind the dragger's facing).
-        corpse.x = dragger.x;
-        corpse.y = dragger.y;
-        broadcastCorpseUpdate(dispatcher, corpse);
+        const moved = { ...corpse, x: dragger.x, y: dragger.y };
+        state.corpses[corpse.corpseId] = moved;
+        broadcastCorpseUpdate(dispatcher, moved);
       }
     }
   }
@@ -488,6 +513,8 @@ export function matchLoop(
       if (result) {
         state.ended = true;
         state.phase = MatchPhase.Ending;
+        // Auto-return everyone to the lobby after a brief reveal screen.
+        state.endingResetAtTick = tick + TICK_RATE * 10;
         const reveals = buildReveals(state);
         const winnerIds = new Set(result.winners.map((p) => p.userId));
         const summary = state.secretActualModeId
@@ -816,12 +843,10 @@ function handleMoveIntent(
   if (!player) return;
   const isSprinting = !!state.sprinting?.[m.sender.userId] && player.stamina >= SPRINT_MIN_STAMINA;
   const isSlowed = (state.slowedUntilTick?.[m.sender.userId] ?? 0) > tick;
-  // Sprint halves the cooldown; sedative doubles it. Both stack.
   let cooldown = MOVE_COOLDOWN_TICKS;
   if (isSprinting) cooldown = Math.max(1, Math.floor(cooldown / 2));
   if (isSlowed) cooldown = cooldown * 2;
   if (tick - player.lastMoveTickN < cooldown) return;
-  // KO'd or frozen players can't move.
   if ((state.koUntilTick?.[m.sender.userId] ?? 0) > tick) return;
   if ((state.frozenUntilTick?.[m.sender.userId] ?? 0) > tick) return;
 
@@ -837,6 +862,16 @@ function handleMoveIntent(
   const ny = player.y + delta.dy;
   player.facing = req.dir as Facing;
   if (!tilemap.isPassable(nx, ny)) {
+    broadcastPlayerMoved(dispatcher, player, tick, state);
+    return;
+  }
+  // Physical map objects (containers, corpses, closed doors) block tile-step
+  // movement. Vendings are static and already baked into tilemap.isPassable.
+  if (
+    entryAt(state.containers, nx, ny) ||
+    entryAt(state.corpses, nx, ny) ||
+    closedDoorAt(state, nx, ny)
+  ) {
     broadcastPlayerMoved(dispatcher, player, tick, state);
     return;
   }
@@ -932,7 +967,7 @@ function handleInvPickup(
   }
   const r = addItem(player.inventory, ground.itemId, ground.count, ground.data);
   if (!r) return;
-  player.inventory = r.inventory;
+  updatePlayer(state, m.sender.userId, { inventory: r.inventory });
   delete state.groundItems[req.groundItemId];
   sendInvDelta(dispatcher, state, m.sender, { upserted: [r.instance], weight: r.inventory.weight });
   broadcastGroundItemDelta(dispatcher, { removed: [req.groundItemId] });
@@ -950,7 +985,7 @@ function handleInvDrop(
   if (!req) return;
   const r = removeItem(player.inventory, req.instanceId);
   if (!r) return;
-  player.inventory = r.inventory;
+  updatePlayer(state, m.sender.userId, { inventory: r.inventory });
   const ground = fromInstance(r.removed, player.x, player.y);
   state.groundItems[ground.groundItemId] = ground;
   sendInvDelta(dispatcher, state, m.sender, {
@@ -977,11 +1012,11 @@ function handleInvEquip(
     sendError(dispatcher, m.sender, 'no_such_instance', 'cannot equip');
     return;
   }
-  player.inventory = e;
+  updatePlayer(state, m.sender.userId, { inventory: e });
+  const updated = state.players[m.sender.userId];
+  if (!updated) return;
   sendInvDelta(dispatcher, state, m.sender, { equipped: e.equipped });
-  // Broadcast a position update so other clients pick up the new
-  // equippedItemId in the public view (no actual movement happened).
-  broadcastPlayerMoved(dispatcher, player, state.tickN, state);
+  broadcastPlayerMoved(dispatcher, updated, state.tickN, state);
 }
 
 function handleInvSetHotkey(
@@ -1000,7 +1035,7 @@ function handleInvSetHotkey(
     sendError(dispatcher, m.sender, 'no_such_instance', 'cannot bind hotkey');
     return;
   }
-  player.inventory = h;
+  updatePlayer(state, m.sender.userId, { inventory: h });
   sendInvDelta(dispatcher, state, m.sender, { hotkeys: h.hotkeys });
 }
 
@@ -1059,7 +1094,7 @@ function handleInvUse(
       broadcastGroundItemDelta(dispatcher, { upserted: [toPublicGroundItem(ground)] });
       const removed = removeItem(player.inventory, inst.instanceId);
       if (removed) {
-        player.inventory = removed.inventory;
+        updatePlayer(state, player.userId, { inventory: removed.inventory });
         sendInvDelta(dispatcher, state, m.sender, {
           removed: [inst.instanceId],
           hotkeys: removed.inventory.hotkeys,
@@ -1095,12 +1130,12 @@ function handleInvUse(
         ...inst,
         data: { ...(inst.data ?? {}), filled: payload ?? 'unknown' },
       };
-      player.inventory = {
+      updatePlayer(state, player.userId, { inventory: {
         ...player.inventory,
         items: player.inventory.items.map((it) =>
           it.instanceId === inst.instanceId ? updated : it,
         ),
-      };
+      } });
       sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
       return;
     }
@@ -1125,7 +1160,7 @@ function handleInvUse(
         if ((state.scheduledInfections?.length ?? 0) < before) {
           broadcastAnnouncement(dispatcher, {
             kind: 'mode_event',
-            message: `${player.username} cured the infection.`,
+            message: `${player.displayName} cured the infection.`,
           });
         }
       } else if (filled === 'Sedative') {
@@ -1136,7 +1171,7 @@ function handleInvUse(
         state.slowedUntilTick[player.userId] = state.tickN + TICK_RATE * 10;
         broadcastAnnouncement(dispatcher, {
           kind: 'mode_event',
-          message: `${player.username} stumbles, drugged.`,
+          message: `${player.displayName} stumbles, drugged.`,
         });
         pushStatus(state, dispatcher, player);
       }
@@ -1151,12 +1186,12 @@ function handleInvUse(
         ...inst,
         data: { ...(inst.data ?? {}), on: !inst.data?.['on'] },
       };
-      player.inventory = {
+      updatePlayer(state, player.userId, { inventory: {
         ...player.inventory,
         items: player.inventory.items.map((it) =>
           it.instanceId === inst.instanceId ? updated : it,
         ),
-      };
+      } });
       sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
       return;
     }
@@ -1195,7 +1230,7 @@ function handleInvUse(
         if (!p) continue;
         entries.push({
           userId: p.userId,
-          username: p.username,
+          displayName: p.displayName,
           isAlive: p.isAlive,
           condition: describeCondition(p),
           ...(p.classroom ? { classroom: p.classroom } : {}),
@@ -1254,7 +1289,7 @@ function handleInvUse(
       if (hitVictim) {
         broadcastAnnouncement(dispatcher, {
           kind: 'mode_event',
-          message: `${player.username} reaches out — a black feather curls through the air.`,
+          message: `${player.displayName} reaches out — a black feather curls through the air.`,
         });
       }
       if (hitVictim && path.length > 0) {
@@ -1324,7 +1359,7 @@ function handleInvUse(
         if (!p) continue;
         entries.push({
           userId: p.userId,
-          username: p.username,
+          displayName: p.displayName,
           isAlive: p.isAlive,
           condition: describeCondition(p),
           ...(p.classroom ? { classroom: p.classroom } : {}),
@@ -1370,7 +1405,7 @@ function consumeCharge(
 ): void {
   const removed = removeItem(player.inventory, instanceId);
   if (!removed) return;
-  player.inventory = removed.inventory;
+  updatePlayer(state, player.userId, { inventory: removed.inventory });
   sendInvFull(dispatcher, state, sender);
 }
 
@@ -1396,18 +1431,17 @@ function handleViewProfile(
     return;
   }
   // Doppelganger profile spoof: when target is a disguised doppel, return
-  // the victim's spoofed stats (Perfect / 100 HP / alive) under the
-  // victim's username. The viewer is themselves never spoofed — looking
-  // at yourself shows real stats.
-  const disguiseUsername = target.roleData?.['disguiseUsername'] as string | undefined;
+  // the spoofed stats (Perfect / 100 HP / alive) under the copied corpse's
+  // display name. Looking at yourself always shows real stats.
+  const disguiseDisplayName = target.roleData?.['disguiseDisplayName'] as string | undefined;
   const disguiseHp = target.roleData?.['disguiseProfileHp'] as number | undefined;
   const disguiseMaxHp = target.roleData?.['disguiseProfileMaxHp'] as number | undefined;
   const isSpoofed =
-    target.userId !== viewer.userId && target.roleId === 'doppelganger' && !!disguiseUsername;
+    target.userId !== viewer.userId && target.roleId === 'doppelganger' && !!disguiseDisplayName;
   const payload: S2CProfileView = isSpoofed
     ? {
         userId: target.userId,
-        username: disguiseUsername ?? target.username,
+        displayName: disguiseDisplayName ?? target.displayName,
         hp: disguiseHp ?? target.maxHp,
         maxHp: disguiseMaxHp ?? target.maxHp,
         isAlive: true,
@@ -1415,7 +1449,7 @@ function handleViewProfile(
       }
     : {
         userId: target.userId,
-        username: target.username,
+        displayName: target.displayName,
         hp: target.hp,
         maxHp: target.maxHp,
         isAlive: target.isAlive,
@@ -1462,12 +1496,17 @@ function handleDragCorpse(
   }
   const delta = DIRECTION_DELTAS[player.facing];
   if (!delta) return;
+  // Authoritative: only push the corpse directly in front of the player —
+  // never sideways or behind, even if the client requested it.
+  if (corpse.x !== player.x + delta.dx || corpse.y !== player.y + delta.dy) {
+    return;
+  }
   const nx = corpse.x + delta.dx;
   const ny = corpse.y + delta.dy;
   if (!tilemap.isPassable(nx, ny)) return;
-  corpse.x = nx;
-  corpse.y = ny;
-  broadcastCorpseUpdate(dispatcher, corpse);
+  const moved = { ...corpse, x: nx, y: ny };
+  state.corpses[corpse.corpseId] = moved;
+  broadcastCorpseUpdate(dispatcher, moved);
 }
 
 /**
@@ -1546,7 +1585,8 @@ function handleDoppelgangerCopy(
   player.roleData = {
     ...(player.roleData ?? {}),
     disguiseAsUserId: corpse.victimUserId,
-    disguiseUsername: corpse.victimUsername,
+    disguiseDisplayName: corpse.victimDisplayName,
+    disguiseHairId: corpse.victimHairId,
     disguiseProfileHp: fakeMaxHp,
     disguiseProfileMaxHp: fakeMaxHp,
   };
@@ -1630,10 +1670,10 @@ function handlePaperWrite(
   if (!inst) return;
   const text = (req.text ?? '').slice(0, 500);
   const updated = { ...inst, data: { ...(inst.data ?? {}), text } };
-  player.inventory = {
+  updatePlayer(state, player.userId, { inventory: {
     ...player.inventory,
     items: player.inventory.items.map((it) => (it.instanceId === inst.instanceId ? updated : it)),
-  };
+  } });
   sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
   broadcastFxSound(dispatcher, 'writing', player.x, player.y, 0.4);
 }
@@ -1657,7 +1697,7 @@ function handlePaperAirplane(
     return;
   }
   const text = (inst.data?.['text'] as string | undefined) ?? '';
-  const payload: S2CPaperReceived = { fromUsername: sender.username, text };
+  const payload: S2CPaperReceived = { fromDisplayName: sender.displayName, text };
   dispatcher.broadcastMessage(
     OpCode.S2C_PAPER_RECEIVED,
     JSON.stringify(payload),
@@ -1667,7 +1707,7 @@ function handlePaperAirplane(
   );
   const removed = removeItem(sender.inventory, inst.instanceId);
   if (removed) {
-    sender.inventory = removed.inventory;
+    updatePlayer(state, sender.userId, { inventory: removed.inventory });
     sendInvFull(dispatcher, state, m.sender);
   }
   broadcastFxSound(dispatcher, 'birdflap', sender.x, sender.y, 0.5);
@@ -1689,7 +1729,8 @@ function handleSuicide(
   const corpse: Corpse = {
     corpseId: newCorpseId(),
     victimUserId: player.userId,
-    victimUsername: player.username,
+    victimDisplayName: player.displayName,
+    victimHairId: player.hairId,
     victimRealName: player.realName,
     killerUserId: null,
     cause: 'Suicide',
@@ -1699,20 +1740,20 @@ function handleSuicide(
     discovered: false,
     discoveredByUserId: null,
   };
-  player.inventory = {
+  updatePlayer(state, player.userId, { inventory: {
     items: [],
     hotkeys: [null, null, null, null, null],
     equipped: null,
     weight: 0,
     weightCap: player.inventory.weightCap,
-  };
+  } });
   state.corpses[corpse.corpseId] = corpse;
   broadcastPlayerDied(dispatcher, player, null, 'Suicide');
   broadcastCorpseUpdate(dispatcher, corpse);
   broadcastFxSound(dispatcher, 'body_fall', player.x, player.y, 0.7);
   broadcastAnnouncement(dispatcher, {
     kind: 'system',
-    message: `${player.username} took their own life.`,
+    message: `${player.displayName} took their own life.`,
   });
   logger.info('suicide: %s', player.userId);
 }
@@ -1723,7 +1764,7 @@ function handleSuicide(
  * when a Suspect role is actually alive in the match.
  */
 function bodyDiscoveryMessage(state: PyrceMatchState, c: Corpse): string {
-  const finder = state.players[c.discoveredByUserId ?? '']?.username ?? 'someone';
+  const finder = state.players[c.discoveredByUserId ?? '']?.displayName ?? 'someone';
   const standard = `Warning: dead body located! ${c.victimRealName} found by ${finder}.`;
   let suspect: PlayerInGame | null = null;
   for (const uid in state.players) {
@@ -1776,7 +1817,7 @@ function handleEscapeDoor(
     return;
   }
   const removed = removeItem(player.inventory, cardInst.instanceId);
-  if (removed) player.inventory = removed.inventory;
+  if (removed) updatePlayer(state, player.userId, { inventory: removed.inventory });
   player.hasEscaped = true;
   player.isAlive = false;
   player.isWatching = true;
@@ -1790,7 +1831,7 @@ function handleEscapeDoor(
   broadcastFxSound(dispatcher, 'doormetal', spawn?.x ?? player.x, spawn?.y ?? player.y, 0.7);
   broadcastAnnouncement(dispatcher, {
     kind: 'system',
-    message: `${player.username} has escaped Pyrce High!`,
+    message: `${player.displayName} has escaped Pyrce High!`,
   });
 }
 
@@ -1828,10 +1869,10 @@ function handleWash(
       const next = { ...inst.data };
       delete next['bloody'];
       const updated = { ...inst, data: next };
-      player.inventory = {
+      updatePlayer(state, player.userId, { inventory: {
         ...player.inventory,
         items: player.inventory.items.map((it) => (it.instanceId === equipId ? updated : it)),
-      };
+      } });
       sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
       // Re-broadcast moved so equippedItemBloody updates for onlookers.
       broadcastPlayerMoved(dispatcher, player, tick, state);
@@ -1904,7 +1945,7 @@ function handlePlantItem(
     }
     const removed = removeItem(player.inventory, inst.instanceId);
     if (!removed) return;
-    player.inventory = removed.inventory;
+    updatePlayer(state, player.userId, { inventory: removed.inventory });
     c.contents = [...c.contents, removed.removed];
     sendInvDelta(dispatcher, state, m.sender, {
       removed: [inst.instanceId],
@@ -1935,7 +1976,7 @@ function handlePlantItem(
   target.inventory = r.inventory;
   const removed2 = removeItem(player.inventory, inst.instanceId);
   if (!removed2) return;
-  player.inventory = removed2.inventory;
+  updatePlayer(state, player.userId, { inventory: removed2.inventory });
   sendInvDelta(dispatcher, state, m.sender, {
     removed: [inst.instanceId],
     hotkeys: removed2.inventory.hotkeys,
@@ -1990,7 +2031,7 @@ function handleInjectTarget(
       if (state.scheduledInfections.length < before) {
         broadcastAnnouncement(dispatcher, {
           kind: 'mode_event',
-          message: `${player.username} cured ${target.username}.`,
+          message: `${player.displayName} cured ${target.displayName}.`,
         });
       }
     }
@@ -1999,7 +2040,7 @@ function handleInjectTarget(
     state.slowedUntilTick[target.userId] = state.tickN + TICK_RATE * 10;
     broadcastAnnouncement(dispatcher, {
       kind: 'mode_event',
-      message: `${target.username} stumbles, drugged.`,
+      message: `${target.displayName} stumbles, drugged.`,
     });
     pushStatus(state, dispatcher, target);
   }
@@ -2092,7 +2133,7 @@ function handlePdaSend(
   }
   const targetPres = state.presences[target.userId];
   if (!targetPres) return;
-  const payload: S2CPaperReceived = { fromUsername: 'ANON', text: body };
+  const payload: S2CPaperReceived = { fromDisplayName: 'ANON', text: body };
   dispatcher.broadcastMessage(
     OpCode.S2C_PAPER_RECEIVED,
     JSON.stringify(payload),
@@ -2139,6 +2180,14 @@ function handleContainerPush(
   }
   const delta = DIRECTION_DELTAS[player.facing];
   if (!delta) return;
+  // Authoritative check: the container must actually be the tile IN FRONT
+  // of the player (not behind / sideways). Client's facing can lag the
+  // server by a tick during rapid input, which would otherwise make the
+  // server happily push a sideways container "in facing direction" — which
+  // visually reads as pulling it toward the player.
+  if (c.x !== player.x + delta.dx || c.y !== player.y + delta.dy) {
+    return;
+  }
   const nx = c.x + delta.dx;
   const ny = c.y + delta.dy;
   if (!tilemap.isPassable(nx, ny)) return;
@@ -2150,9 +2199,16 @@ function handleContainerPush(
     const o = state.players[uid];
     if (o && o.isAlive && o.x === nx && o.y === ny) return;
   }
-  c.x = nx;
-  c.y = ny;
-  const payload: S2CContainerMoved = { containerId: c.containerId, x: nx, y: ny };
+  const fromX = c.x;
+  const fromY = c.y;
+  state.containers[c.containerId] = { ...c, x: nx, y: ny };
+  const payload: S2CContainerMoved = {
+    containerId: c.containerId,
+    fromX,
+    fromY,
+    x: nx,
+    y: ny,
+  };
   dispatcher.broadcastMessage(
     OpCode.S2C_CONTAINER_MOVED,
     JSON.stringify(payload),
@@ -2383,7 +2439,7 @@ function handleOfferEyes(
     fromUserId: sender.userId,
     expiresAtTick: state.tickN + EYE_DEAL_OFFER_TIMEOUT_TICKS,
   };
-  const payload: S2CEyeOffer = { fromUserId: sender.userId, fromUsername: sender.username };
+  const payload: S2CEyeOffer = { fromUserId: sender.userId, fromDisplayName: sender.displayName };
   dispatcher.broadcastMessage(
     OpCode.S2C_EYE_OFFER,
     JSON.stringify(payload),
@@ -2429,7 +2485,7 @@ function handleAcceptEyes(
   state.scheduledEyeDeaths.push({ userId: player.userId, atGameMinute: deathInMinutes });
   broadcastAnnouncement(dispatcher, {
     kind: 'mode_event',
-    message: `${player.username} has been visited by a Shinigami.`,
+    message: `${player.displayName} has been visited by a Shinigami.`,
   });
 }
 
@@ -2550,7 +2606,7 @@ function handleVoteKick(
     const targetPlayer = state.players[target];
     const payload: S2CVoteKickTally = {
       targetUserId: target,
-      targetUsername: targetPlayer?.username ?? '?',
+      targetDisplayName: targetPlayer?.displayName ?? '?',
       yes,
       alive,
       resolved,
@@ -2570,7 +2626,8 @@ function handleVoteKick(
       const corpse: Corpse = {
         corpseId: newCorpseId(),
         victimUserId: targetPlayer.userId,
-        victimUsername: targetPlayer.username,
+        victimDisplayName: targetPlayer.displayName,
+        victimHairId: targetPlayer.hairId,
         victimRealName: targetPlayer.realName,
         killerUserId: null,
         cause: 'Vote-Kicked',
@@ -2592,7 +2649,7 @@ function handleVoteKick(
       broadcastCorpseUpdate(dispatcher, corpse);
       broadcastAnnouncement(dispatcher, {
         kind: 'system',
-        message: `${targetPlayer.username} was vote-kicked from the round.`,
+        message: `${targetPlayer.displayName} was vote-kicked from the round.`,
       });
       delete state.kickVotes[target];
       logger.info('vote-kick: %s removed (%d/%d voted)', target, yes, alive);
@@ -2656,6 +2713,7 @@ function handleVoteEndGame(
   if (resolved) {
     state.ended = true;
     state.phase = MatchPhase.Ending;
+    state.endingResetAtTick = state.tickN + TICK_RATE * 10;
     const reveals = buildReveals(state);
     const summary = state.secretActualModeId
       ? `Round ended by player vote. Secret was actually ${getMode(state.secretActualModeId)?.displayName ?? state.secretActualModeId}.`
@@ -2713,7 +2771,6 @@ function handleVendingBuy(
     sendError(dispatcher, m.sender, 'no_yen', `you need ${VENDING_COST_YEN} yen`);
     return;
   }
-  // Deduct yen (whole-array replacement for Goja proxy correctness).
   const updatedYen = { ...yen, count: yen.count - VENDING_COST_YEN };
   let inv: typeof player.inventory = {
     ...player.inventory,
@@ -2730,10 +2787,10 @@ function handleVendingBuy(
       equipped: inv.equipped === yen.instanceId ? null : inv.equipped,
     };
   }
-  player.inventory = inv;
+  updatePlayer(state, player.userId, { inventory: inv });
   // Grant the soda.
   const r = addItem(player.inventory, 'soda', 1);
-  if (r) player.inventory = r.inventory;
+  if (r) updatePlayer(state, player.userId, { inventory: r.inventory });
   sendInvFull(dispatcher, state, m.sender);
   broadcastFxSound(dispatcher, 'page_turn_1', req.x, req.y, 0.5);
 }
@@ -2828,7 +2885,7 @@ function handleThrow(
   // Remove the weapon from inventory.
   const removed = removeItem(player.inventory, inst.instanceId);
   if (removed) {
-    player.inventory = removed.inventory;
+    updatePlayer(state, player.userId, { inventory: removed.inventory });
     sendInvFull(dispatcher, state, m.sender);
   }
   // Drop where it landed (or at attacker's tile if no path).
@@ -2847,7 +2904,8 @@ function handleThrow(
       const corpse: Corpse = {
         corpseId: newCorpseId(),
         victimUserId: hit.userId,
-        victimUsername: hit.username,
+        victimDisplayName: hit.displayName,
+        victimHairId: hit.hairId,
         victimRealName: hit.realName,
         killerUserId: player.userId,
         cause: `Thrown ${def.name}`,
@@ -2887,7 +2945,10 @@ function handleJoinAsWatcher(
   if (state.players[m.sender.userId]) return;
   const spawn = tilemap.spawnsById.get('Watcher');
   if (!spawn) return;
-  const watcher = newPlayerInGame(m.sender.userId, m.sender.username, spawn.x, spawn.y);
+  const demo =
+    state.lobbyDemographics[m.sender.userId] ??
+    rollUniqueDemographics(Object.values(state.lobbyDemographics));
+  const watcher = newPlayerInGame(m.sender.userId, m.sender.username, spawn.x, spawn.y, demo);
   watcher.roleId = 'watcher';
   watcher.isAlive = false;
   watcher.isWatching = true;
@@ -2897,7 +2958,7 @@ function handleJoinAsWatcher(
   sendInvFull(dispatcher, state, m.sender);
   broadcastAnnouncement(dispatcher, {
     kind: 'system',
-    message: `${watcher.username} joined as a Watcher.`,
+    message: `${watcher.displayName} joined as a Watcher.`,
   });
 }
 
@@ -2962,7 +3023,7 @@ function handleInvCraft(
     true,
   );
   if (result.ok) {
-    player.inventory = result.inventory;
+    updatePlayer(state, player.userId, { inventory: result.inventory });
     sendInvFull(dispatcher, state, m.sender);
   }
 }
@@ -3016,8 +3077,7 @@ function handleContainerTake(
   if (!taken) return;
   const r = addItem(player.inventory, taken.itemId, taken.count, taken.data);
   if (!r) return;
-  player.inventory = r.inventory;
-  // Whole-array replacement (Goja proxy quirk).
+  updatePlayer(state, player.userId, { inventory: r.inventory });
   c.contents = c.contents.filter((it) => it.instanceId !== req.instanceId);
   sendInvDelta(dispatcher, state, m.sender, {
     upserted: [r.instance],
@@ -3041,7 +3101,7 @@ function handleContainerPut(
   if (!withinContainerRange(player, c)) return;
   const r = removeItem(player.inventory, req.instanceId);
   if (!r) return;
-  player.inventory = r.inventory;
+  updatePlayer(state, player.userId, { inventory: r.inventory });
   // Whole-array replacement (Goja proxy quirk).
   c.contents = [...c.contents, r.removed];
   sendInvDelta(dispatcher, state, m.sender, {
@@ -3080,7 +3140,7 @@ function handleChat(
     const lobbyPayload: S2CChatMessage = {
       channel: ChatChannel.OOC,
       fromUserId: m.sender.userId,
-      fromUsername: m.sender.username,
+      fromDisplayName: state.players[m.sender.userId]?.displayName ?? m.sender.username,
       body,
       bubble: false,
       tickN: tick,
@@ -3104,7 +3164,7 @@ function handleChat(
   const payload: S2CChatMessage = {
     channel: req.channel,
     fromUserId: sender.userId,
-    fromUsername: sender.username,
+    fromDisplayName: sender.displayName,
     body,
     bubble,
     tickN: tick,
@@ -3229,7 +3289,7 @@ function handleAttack(
       }
       broadcastAnnouncement(dispatcher, {
         kind: 'mode_event',
-        message: `${attacker.username} snickers as butterflies emerge.`,
+        message: `${attacker.displayName} snickers as butterflies emerge.`,
       });
       state.scheduledButterfly = [];
     }
@@ -3289,7 +3349,7 @@ function handleSearchCorpse(
       const payload: S2CSearchRequest = {
         requestId,
         searcherUserId: player.userId,
-        searcherUsername: player.username,
+        searcherDisplayName: player.displayName,
         corpseId: c.corpseId,
       };
       dispatcher.broadcastMessage(
@@ -3330,7 +3390,7 @@ function handleSearchConsent(
   } else {
     const payload: S2CSearchDenied = {
       corpseId: corpse.corpseId,
-      reason: `${responder.username} declined your search`,
+      reason: `${responder.displayName} declined your search`,
     };
     dispatcher.broadcastMessage(
       OpCode.S2C_SEARCH_DENIED,
@@ -3374,7 +3434,7 @@ function handleTakeFromCorpse(
   if (!taken) return;
   const added = addItem(player.inventory, taken.itemId, taken.count, taken.data);
   if (!added) return;
-  player.inventory = added.inventory;
+  updatePlayer(state, player.userId, { inventory: added.inventory });
   c.contents = c.contents.filter((it) => it.instanceId !== req.instanceId);
   sendInvDelta(dispatcher, state, m.sender, {
     upserted: [added.instance],
@@ -3444,7 +3504,8 @@ function drainScheduledEffects(
       const corpse: Corpse = {
         corpseId: newCorpseId(),
         victimUserId: victim.userId,
-        victimUsername: victim.username,
+        victimDisplayName: victim.displayName,
+        victimHairId: victim.hairId,
         victimRealName: victim.realName,
         killerUserId: s.killerUserId,
         cause: s.cause,
@@ -3488,7 +3549,8 @@ function drainScheduledEffects(
       const corpse: Corpse = {
         corpseId: newCorpseId(),
         victimUserId: victim.userId,
-        victimUsername: victim.username,
+        victimDisplayName: victim.displayName,
+        victimHairId: victim.hairId,
         victimRealName: victim.realName,
         killerUserId: null,
         cause: 'Shinigami Eye Deal',
@@ -3534,7 +3596,7 @@ function drainScheduledEffects(
       broadcastPlayerMoved(dispatcher, target, tick, state);
       broadcastAnnouncement(dispatcher, {
         kind: 'mode_event',
-        message: `${target.username} stirs back to life…`,
+        message: `${target.displayName} stirs back to life…`,
       });
       const targetPresence = state.presences[target.userId];
       if (targetPresence) sendSelfRoleState(dispatcher, targetPresence, target);
@@ -3556,7 +3618,7 @@ function drainScheduledEffects(
       target.roleId = 'zombie';
       broadcastAnnouncement(dispatcher, {
         kind: 'mode_event',
-        message: `${target.username} has turned!`,
+        message: `${target.displayName} has turned!`,
       });
       logger.info('zombie infect: %s turned', target.userId);
     }
@@ -3589,7 +3651,8 @@ function reapStaleDisconnects(
     const corpse: Corpse = {
       corpseId: newCorpseId(),
       victimUserId: p.userId,
-      victimUsername: p.username,
+      victimDisplayName: p.displayName,
+      victimHairId: p.hairId,
       victimRealName: p.realName,
       killerUserId: null,
       cause: 'Disconnect',
@@ -3599,19 +3662,19 @@ function reapStaleDisconnects(
       discovered: false,
       discoveredByUserId: null,
     };
-    p.inventory = {
+    updatePlayer(state, p.userId, { inventory: {
       items: [],
       hotkeys: [null, null, null, null, null],
       equipped: null,
       weight: 0,
       weightCap: p.inventory.weightCap,
-    };
+    } });
     state.corpses[corpse.corpseId] = corpse;
     broadcastPlayerDied(dispatcher, p, null, 'Disconnect');
     broadcastCorpseUpdate(dispatcher, corpse);
     broadcastAnnouncement(dispatcher, {
       kind: 'system',
-      message: `${p.username} disconnected and was lost to the round.`,
+      message: `${p.displayName} disconnected and was lost to the round.`,
     });
     logger.info('disconnect kill: %s after %d ticks', p.userId, tick - at);
   }
@@ -3712,7 +3775,7 @@ function pickRandomSpawn(): { x: number; y: number } {
  * a teacher in this school is Kira." X is rand(1,40).
  */
 function seedDetectiveClue(state: PyrceMatchState): void {
-  for (const uid in state.players) {
+  for (const uid of Object.keys(state.players)) {
     const p = state.players[uid];
     if (!p || p.roleId !== 'detective') continue;
     const sheet = p.inventory.items.find((i) => i.itemId === 'paper_sheet');
@@ -3720,23 +3783,27 @@ function seedDetectiveClue(state: PyrceMatchState): void {
     const odds = 1 + Math.floor(Math.random() * 40);
     const text = `There is about a ${odds}% chance a teacher in this school is Kira. Keep this note confidential.`;
     const updated = { ...sheet, data: { ...(sheet.data ?? {}), text } };
-    p.inventory = {
-      ...p.inventory,
-      items: p.inventory.items.map((it) => (it.instanceId === sheet.instanceId ? updated : it)),
+    state.players[uid] = {
+      ...p,
+      inventory: {
+        ...p.inventory,
+        items: p.inventory.items.map((it) =>
+          it.instanceId === sheet.instanceId ? updated : it,
+        ),
+      },
     };
   }
 }
 
 function relocateSpecialSpawns(state: PyrceMatchState): void {
-  for (const userId in state.players) {
+  for (const userId of Object.keys(state.players)) {
     const p = state.players[userId];
     if (!p) continue;
     const target = SPECIAL_SPAWN_BY_ROLE[p.roleId];
     if (!target) continue;
     const spot = tilemap.spawnsById.get(target);
     if (!spot) continue;
-    p.x = spot.x;
-    p.y = spot.y;
+    updatePlayer(state, userId, { x: spot.x, y: spot.y });
   }
 }
 
@@ -3779,7 +3846,10 @@ function assignSpawns(state: PyrceMatchState): void {
     if (!presence) continue;
     const sp = spawns[i % spawns.length];
     if (!sp) continue;
-    const player = newPlayerInGame(userId, presence.username, sp.x, sp.y);
+    const demo =
+      state.lobbyDemographics[userId] ??
+      rollUniqueDemographics(Object.values(state.lobbyDemographics));
+    const player = newPlayerInGame(userId, presence.username, sp.x, sp.y, demo);
     const room = SPAWN_TO_CLASSROOM[sp.id];
     if (room) player.classroom = room;
     state.players[userId] = player;
@@ -3995,6 +4065,8 @@ function broadcastPlayerDied(
     userId: victim.userId,
     killerUserId,
     cause,
+    victimDisplayName: victim.displayName,
+    victimRealName: victim.realName,
     x: victim.x,
     y: victim.y,
   };
@@ -4005,7 +4077,7 @@ function broadcastCorpseUpdate(dispatcher: nkruntime.MatchDispatcher, c: Corpse)
   const pub: PublicCorpse = {
     corpseId: c.corpseId,
     victimUserId: c.victimUserId,
-    victimUsername: c.victimUsername,
+    victimDisplayName: c.victimDisplayName,
     // Real name only revealed once the body has been discovered.
     victimRealName: c.discovered ? c.victimRealName : '',
     x: c.x,
@@ -4152,11 +4224,115 @@ function refreshLabel(dispatcher: nkruntime.MatchDispatcher, state: PyrceMatchSt
   dispatcher.matchLabelUpdate(JSON.stringify(buildLabel(state, WIRE_PROTOCOL_VERSION)));
 }
 
+/**
+ * After the end-of-round reveal screen, send everyone still connected back
+ * to the same match's Lobby phase. Demographics (gender, hair, real name)
+ * are kept so each player keeps their identity across rounds — only the
+ * round-bound state (clock, players, containers, corpses, votes, etc.) is
+ * cleared.
+ */
+function resetToLobby(
+  state: PyrceMatchState,
+  dispatcher: nkruntime.MatchDispatcher,
+  logger: nkruntime.Logger,
+): void {
+  state.phase = MatchPhase.Lobby;
+  state.gameModeId = null;
+  state.players = {};
+  state.groundItems = {};
+  state.containers = {};
+  state.corpses = {};
+  state.clock = null;
+  state.ended = false;
+  delete state.endingResetAtTick;
+  delete state.modeVotes;
+  delete state.endGameVotes;
+  delete state.kickVotes;
+  delete state.scheduledDeaths;
+  delete state.scheduledRevives;
+  delete state.scheduledInfections;
+  delete state.scheduledButterfly;
+  delete state.searchRequests;
+  delete state.pullingCorpse;
+  delete state.koUntilTick;
+  delete state.bleedUntilTick;
+  delete state.frozenUntilTick;
+  delete state.slowedUntilTick;
+  delete state.washingUntilTick;
+  delete state.sprinting;
+  delete state.lastSprintDrainTick;
+  delete state.lastShoveTick;
+  delete state.lockedDoors;
+  delete state.openDoors;
+  delete state.pendingDoorCloses;
+  delete state.doorCode;
+  delete state.secretActualModeId;
+  delete state.lightsOff;
+  delete state.tapesDeleted;
+  delete state.eyeOffers;
+  delete state.scheduledEyeDeaths;
+  broadcastPhaseChange(dispatcher, state);
+  refreshLabel(dispatcher, state);
+  broadcastLobbyState(dispatcher, state);
+  logger.info('round end → lobby reset, presences=%d', countPresences(state));
+}
+
+/**
+ * Snapshot the lobby roster (userId + displayName + isHost) and broadcast it
+ * to everyone (or a single recipient if `to` is set). Cheap full-sync — the
+ * lobby caps at MAX_PLAYERS and joins/leaves are infrequent.
+ */
+function broadcastLobbyState(
+  dispatcher: nkruntime.MatchDispatcher,
+  state: PyrceMatchState,
+  to: nkruntime.Presence | null = null,
+): void {
+  if (state.phase !== MatchPhase.Lobby) return;
+  const entries: S2CLobbyState['entries'] = [];
+  for (const userId in state.presences) {
+    const demo = state.lobbyDemographics[userId];
+    if (!demo) continue;
+    entries.push({
+      userId,
+      displayName: demo.displayName,
+      isHost: userId === state.hostUserId,
+    });
+  }
+  const payload: S2CLobbyState = { entries };
+  dispatcher.broadcastMessage(
+    OpCode.S2C_LOBBY_STATE,
+    JSON.stringify(payload),
+    to ? [to] : null,
+    null,
+    true,
+  );
+}
+
 // ---------- helpers ----------
 
 function withinPickupRange(player: PlayerInGame, x: number, y: number): boolean {
   // DM picks up only on-tile; we mirror that. Adjacent pickup is M3.x polish.
   return player.x === x && player.y === y;
+}
+
+/** True when any entry in a `{id: {x,y}}` map sits on (x, y). */
+function entryAt<T extends { x: number; y: number }>(
+  map: { [k: string]: T } | undefined,
+  x: number,
+  y: number,
+): boolean {
+  if (!map) return false;
+  for (const k in map) {
+    const e = map[k];
+    if (e && e.x === x && e.y === y) return true;
+  }
+  return false;
+}
+
+/** Doors default to closed; only tiles flagged true in `openDoors` are passable. */
+function closedDoorAt(state: PyrceMatchState, x: number, y: number): boolean {
+  if (!tilemap.isDoor(x, y)) return false;
+  return state.openDoors?.[`${x},${y}`] !== true;
 }
 
 function withinContainerRange(player: PlayerInGame, c: { x: number; y: number }): boolean {

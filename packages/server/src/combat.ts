@@ -143,7 +143,8 @@ export function resolveAttack(
       const corpse: Corpse = {
         corpseId: newInstanceId(),
         victimUserId: victim.userId,
-        victimUsername: victim.username,
+        victimDisplayName: victim.displayName,
+        victimHairId: victim.hairId,
         victimRealName: victim.realName,
         killerUserId: attacker.userId,
         cause: weaponName,

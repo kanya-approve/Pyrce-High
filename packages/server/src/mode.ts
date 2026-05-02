@@ -18,7 +18,7 @@ import {
   type WinCondition,
 } from '@pyrce/shared';
 import { addItem, setEquipped, setHotkey } from './inventory.js';
-import type { PlayerInGame, PyrceMatchState } from './matches/state.js';
+import { type PlayerInGame, type PyrceMatchState, updatePlayer } from './matches/state.js';
 
 // ---------- Role assignment ----------
 
@@ -47,13 +47,14 @@ export function assignRoles(state: PyrceMatchState, def: GameModeDef): void {
     for (let i = 0; i < needed; i++) {
       const target = pool.shift();
       if (!target) break;
-      target.roleId = assignment.roleId;
       const role = ROLES[assignment.roleId];
-      target.maxHp = role.baseHp;
-      target.hp = role.baseHp;
-      target.maxStamina = role.baseStamina;
-      target.stamina = role.baseStamina;
-      // M5 leaves realName=username; M5.x can wire char-create overrides.
+      updatePlayer(state, target.userId, {
+        roleId: assignment.roleId,
+        maxHp: role.baseHp,
+        hp: role.baseHp,
+        maxStamina: role.baseStamina,
+        stamina: role.baseStamina,
+      });
     }
     if (pool.length === 0) break;
   }
@@ -61,7 +62,7 @@ export function assignRoles(state: PyrceMatchState, def: GameModeDef): void {
   // Anyone remaining defaults to civilian. (Shouldn't happen if a recipe
   // includes `fillRemaining`, but defensive.)
   for (const p of pool) {
-    p.roleId = 'civilian';
+    updatePlayer(state, p.userId, { roleId: 'civilian' });
   }
 }
 
@@ -71,27 +72,29 @@ export function applyItemGrants(
   logger?: nkruntime.Logger,
 ): void {
   const items = def.setup?.items;
-  logger?.info('applyItemGrants: items=%s', JSON.stringify(items));
   if (!items) return;
   for (const grant of items) {
-    logger?.info('  grant=%s', JSON.stringify(grant));
-    for (const userId in state.players) {
+    for (const userId of Object.keys(state.players)) {
       const p = state.players[userId];
-      logger?.info('    consider user=%s role=%s', userId, p?.roleId ?? 'none');
       if (!p || p.roleId !== grant.roleId) continue;
-      grantItemTo(p, grant, logger);
-      logger?.info('    after grant, items=%d', p.inventory.items.length);
+      const next = grantItemTo(p, grant);
+      if (next) {
+        updatePlayer(state, userId, { inventory: next });
+        logger?.info(
+          'grant %s → %s (role=%s, items=%d)',
+          grant.itemId,
+          userId,
+          p.roleId,
+          next.items.length,
+        );
+      }
     }
   }
 }
 
-function grantItemTo(player: PlayerInGame, grant: ItemGrant, logger?: nkruntime.Logger): void {
-  logger?.info('      grantItemTo: itemId=%s', grant.itemId);
+function grantItemTo(player: PlayerInGame, grant: ItemGrant) {
   const r = addItem(player.inventory, grant.itemId, grant.count ?? 1);
-  if (!r) {
-    logger?.info('      addItem returned: null');
-    return;
-  }
+  if (!r) return null;
   let inv = r.inventory;
   if (grant.equip) {
     const e = setEquipped(inv, r.instance.instanceId);
@@ -101,10 +104,7 @@ function grantItemTo(player: PlayerInGame, grant: ItemGrant, logger?: nkruntime.
     const h = setHotkey(inv, grant.hotkey, r.instance.instanceId);
     if (h) inv = h;
   }
-  // Goja proxy quirk: only top-level property assignment on the player
-  // object propagates back to the live state. See `inventory.ts` header.
-  player.inventory = inv;
-  logger?.info('      added %s, items now=%d', r.instance.itemId, inv.items.length);
+  return inv;
 }
 
 // ---------- Clock ----------
@@ -300,7 +300,8 @@ export function buildReveals(state: PyrceMatchState): RoleReveal[] {
     if (!p) continue;
     out.push({
       userId: p.userId,
-      username: p.username,
+      displayName: p.displayName,
+      realName: p.realName,
       roleId: p.roleId as RoleId,
       isAlive: p.isAlive,
     });
