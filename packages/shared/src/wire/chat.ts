@@ -26,7 +26,8 @@ export interface C2STypingEnd {
 export interface S2CChatMessage {
   channel: ChatChannel;
   fromUserId: string;
-  fromUsername: string;
+  /** Anonymous label of the sender ("Male with brown hair"). */
+  fromDisplayName: string;
   body: string;
   /** Chat-bubble worthy (i.e. say/whisper/shout/emote). False for OOC / dead-chat etc. */
   bubble: boolean;

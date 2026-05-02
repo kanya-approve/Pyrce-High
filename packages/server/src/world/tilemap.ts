@@ -32,6 +32,13 @@ export class Tilemap {
         this.passable[y * this.width + x] = tt?.passable ? 1 : 0;
       }
     }
+    // Vendings are static and immovable — bake them into the passability
+    // grid so handleMoveIntent doesn't have to scan raw.vendings every step.
+    for (const v of raw.vendings ?? []) {
+      if (v.x >= 0 && v.x < this.width && v.y >= 0 && v.y < this.height) {
+        this.passable[v.y * this.width + v.x] = 0;
+      }
+    }
 
     this.spawnsById = new Map();
     for (const sp of raw.spawns) {

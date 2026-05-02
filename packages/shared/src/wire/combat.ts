@@ -56,6 +56,10 @@ export interface S2CPlayerDied {
   killerUserId: string | null;
   /** What killed them — usually the weapon name; for fists, "fists". */
   cause: string;
+  /** Anonymous label of the victim — used in the death announcement. */
+  victimDisplayName: string;
+  /** Real name revealed on death (the kill is public, identity isn't a secret). */
+  victimRealName: string;
   /** Final tile. */
   x: number;
   y: number;
@@ -64,7 +68,10 @@ export interface S2CPlayerDied {
 export interface PublicCorpse {
   corpseId: string;
   victimUserId: string;
-  victimUsername: string;
+  /** Anonymous label — "Male with brown hair". Always visible. */
+  victimDisplayName: string;
+  /** Real name — included once `discovered` flips so the body-found
+   *  announcement and corpse tooltip can show it. */
   victimRealName: string;
   x: number;
   y: number;

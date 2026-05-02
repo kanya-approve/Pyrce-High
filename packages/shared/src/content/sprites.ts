@@ -141,31 +141,73 @@ export function characterWalkFrames(
   return [0, 1, 2, 3].map((f) => `hair-overlays/${base}/_/${dir}/${f}`);
 }
 
-/** Curated set of male/female hair overlay sources we ship as cosmetic options. */
+/**
+ * All hair-overlay atlas keys with full sprite coverage. Source for both
+ * the demographics palette in `names.ts` and the per-hair walk-anim
+ * registration in the client. Keep alphabetical so adding new variants
+ * is mechanical.
+ */
 export const HAIR_OPTIONS_MALE = [
   'BlackBoyHair',
-  'BlondeBoyHair',
   'BlueBoyHair',
+  'BlueBoyHair2',
+  'BlueBoyHair3',
   'BrownBoyHair',
   'GrayBoyHair',
-  'GoggleHair',
   'GreenBoyHair',
   'OrangeBoyHair',
   'PurpleBoyHair',
   'RedBoyHair',
+  'RedBoyHair2',
 ] as const;
 
 export const HAIR_OPTIONS_FEMALE = [
   'BlackGirlHair',
+  'BlackGirlHair2',
   'BlondeGirlHair',
+  'BlondeGirlHair2',
   'BlueGirlHair',
+  'BlueGirlHair2',
   'BrownGirlHair',
-  'GrayGirlHair',
+  'BrownGirlHair2',
   'GreenGirlHair',
+  'GreenGirlHair2',
   'OrangeGirlHair',
+  'PinkGirlHair',
+  'PinkGirlHair2',
   'PurpleGirlHair',
+  'PurpleGirlHair2',
   'RedGirlHair',
+  'SilverGirlHair',
+  'SilverGirlHair2',
+  'WhiteGirlHair',
+  'WhiteGirlHair2',
 ] as const;
+
+/**
+ * Wielded-weapon underlay sprite bases. DM rendered the equipped weapon
+ * via `mob.underlays += '<weapon>.dmi'` so the weapon icon sits beneath
+ * the player and rotates with facing. Format: `${base}/_/${dir}/0`.
+ */
+export const WIELDED_ITEM_SPRITES: Record<string, string | undefined> = {
+  knife: 'mh-icons/knife',
+  alondite: 'mh-icons/alondite',
+  spear: 'mh-icons/spear',
+  mop: 'mh-icons/Mop',
+  stake: 'mh-icons/stake',
+  glowstick: 'mh-icons/glowstick',
+  butterfly: 'mh-icons/butterfly',
+  nanatsu_yoru: 'mh-icons/butterfly',
+};
+
+export function wieldedItemFrame(
+  itemId: string,
+  dir: 'S' | 'N' | 'E' | 'W',
+  frame = 0,
+): string | undefined {
+  const base = WIELDED_ITEM_SPRITES[itemId];
+  return base ? `${base}/_/${dir}/${frame}` : undefined;
+}
 
 export function hairFrame(hairId: string, dir: 'S' | 'N' | 'E' | 'W', frame = 0): string {
   return `hair-overlays/${hairId}/_/${dir}/${frame}`;

@@ -43,7 +43,7 @@ export interface RoleDef {
 export const ROLES: Record<RoleId, RoleDef> = {
   civilian: {
     id: 'civilian',
-    name: 'The Suspect',
+    name: 'Civilian',
     allegiance: 'town',
     baseHp: 100,
     baseStamina: 100,

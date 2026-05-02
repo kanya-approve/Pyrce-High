@@ -21,7 +21,10 @@ export interface S2CClockTick {
 
 export interface RoleReveal {
   userId: string;
-  username: string;
+  /** Anonymous label of the player ("Male with brown hair"). */
+  displayName: string;
+  /** Real name revealed in the end-game roster. */
+  realName: string;
   roleId: RoleId;
   isAlive: boolean;
 }

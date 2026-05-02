@@ -22,7 +22,15 @@ export interface C2SLobbyStartGame {
 
 export interface PublicPlayerInGame {
   userId: string;
-  username: string;
+  /**
+   * Anonymous label others see in the round — "Male with brown hair".
+   * The Nakama account username is intentionally NOT exposed here so
+   * Death Note has to work from sex + hair recognition.
+   */
+  displayName: string;
+  gender: 'male' | 'female';
+  hairId: string;
+  hairColor: string;
   x: number;
   y: number;
   facing: Facing;
@@ -40,10 +48,26 @@ export interface PublicPlayerInGame {
    * the disguise.
    */
   disguiseAsUserId?: string;
-  /** Username override shown when disguised (matches the copied corpse). */
-  disguiseUsername?: string;
+  /** Display-name override shown when disguised (matches the copied corpse). */
+  disguiseDisplayName?: string;
+  /** Hair overlay override shown when disguised. */
+  disguiseHairId?: string;
   /** Number of kills (0..8). Client renders a blood-stain overlay tier. */
   bloody: number;
+}
+
+/**
+ * Lobby roster snapshot — broadcast whenever a player joins or leaves while
+ * the match is still in Lobby phase. Carries the demographics rolled at
+ * join time so the lobby UI can render "Male with brown hair" instead of
+ * the raw Nakama account username.
+ */
+export interface S2CLobbyState {
+  entries: Array<{
+    userId: string;
+    displayName: string;
+    isHost: boolean;
+  }>;
 }
 
 export interface S2CPhaseChange {
@@ -154,7 +178,8 @@ export interface C2SDragCorpse {
 
 export interface S2CProfileView {
   userId: string;
-  username: string;
+  /** Anonymous label of the inspected player ("Male with brown hair"). */
+  displayName: string;
   hp: number;
   maxHp: number;
   isAlive: boolean;
@@ -182,8 +207,8 @@ export interface C2SVoteKick {
 export interface S2CVoteKickTally {
   /** Target userId being voted on (null if no active kick vote). */
   targetUserId: string;
-  /** Username of the target for client display. */
-  targetUsername: string;
+  /** Anonymous label of the kick target for client display. */
+  targetDisplayName: string;
   yes: number;
   alive: number;
   resolved: boolean;
@@ -210,7 +235,8 @@ export interface S2CSearchRequest {
   /** Unique id; the responder echoes it in C2SSearchConsent. */
   requestId: string;
   searcherUserId: string;
-  searcherUsername: string;
+  /** Anonymous label of the searcher shown in the consent prompt. */
+  searcherDisplayName: string;
   corpseId: string;
 }
 
@@ -234,7 +260,8 @@ export interface S2CSelfRoleState {
 export interface S2CStudentRoster {
   entries: Array<{
     userId: string;
-    username: string;
+    /** Anonymous label — "Male with brown hair". */
+    displayName: string;
     isAlive: boolean;
     condition: string;
     /** Assigned classroom at game start: 'A1' | 'A2' | 'B1' | … */
@@ -275,7 +302,8 @@ export interface S2CPaperText {
   text: string;
 }
 export interface S2CPaperReceived {
-  fromUsername: string;
+  /** Anonymous label of the sender (or "ANON" for PDA messages). */
+  fromDisplayName: string;
   text: string;
 }
 export interface S2CDoorCode {
@@ -357,9 +385,13 @@ export interface C2SContainerPush {
   y: number;
 }
 
-/** Container moved to new tile coords. */
+/** Container moved from one tile to another. */
 export interface S2CContainerMoved {
   containerId: string;
+  /** Tile the container occupied before this push. Lets the client match
+   *  the right hotspot when several are clustered together. */
+  fromX: number;
+  fromY: number;
   x: number;
   y: number;
 }
@@ -424,7 +456,8 @@ export interface C2SOfferEyes {
 
 export interface S2CEyeOffer {
   fromUserId: string;
-  fromUsername: string;
+  /** Anonymous label of the Shinigami making the offer. */
+  fromDisplayName: string;
 }
 
 export interface C2SAcceptEyes {

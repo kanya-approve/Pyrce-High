@@ -92,7 +92,7 @@ const NORMAL: GameModeDef = {
       { roleId: 'suspect', count: 1, probability: 0.25, minPlayers: 4 },
       { roleId: 'civilian', count: 'fillRemaining' },
     ],
-    items: [{ roleId: 'killer', itemId: 'knife', equip: true, hotkey: 1 }],
+    items: [{ roleId: 'killer', itemId: 'knife', equip: false, hotkey: 1 }],
   },
   winConditions: [
     { type: 'roleEliminated', roleId: 'killer', winningAllegiance: 'town' },
@@ -124,7 +124,7 @@ const WITCH: GameModeDef = {
       { roleId: 'witch', count: 1 },
       { roleId: 'civilian', count: 'fillRemaining' },
     ],
-    items: [{ roleId: 'witch', itemId: 'knife', equip: true, hotkey: 1 }],
+    items: [{ roleId: 'witch', itemId: 'knife', equip: false, hotkey: 1 }],
   },
   winConditions: [
     { type: 'roleEliminated', roleId: 'witch', winningAllegiance: 'town' },
@@ -166,7 +166,7 @@ const DOPPELGANGER: GameModeDef = {
       { roleId: 'doppelganger', count: 1 },
       { roleId: 'civilian', count: 'fillRemaining' },
     ],
-    items: [{ roleId: 'doppelganger', itemId: 'knife', equip: true, hotkey: 1 }],
+    items: [{ roleId: 'doppelganger', itemId: 'knife', equip: false, hotkey: 1 }],
   },
   winConditions: [
     { type: 'roleEliminated', roleId: 'doppelganger', winningAllegiance: 'town' },
@@ -186,7 +186,7 @@ const SECRET: GameModeDef = {
       { roleId: 'killer', count: 1 },
       { roleId: 'civilian', count: 'fillRemaining' },
     ],
-    items: [{ roleId: 'killer', itemId: 'knife', equip: true, hotkey: 1 }],
+    items: [{ roleId: 'killer', itemId: 'knife', equip: false, hotkey: 1 }],
   },
   winConditions: [
     { type: 'roleEliminated', roleId: 'killer', winningAllegiance: 'town' },
@@ -229,7 +229,7 @@ const VAMPIRE: GameModeDef = {
       { roleId: 'civilian', count: 'fillRemaining' },
     ],
     items: [
-      { roleId: 'vampire', itemId: 'knife', equip: true, hotkey: 1 },
+      { roleId: 'vampire', itemId: 'knife', equip: false, hotkey: 1 },
       { roleId: 'nanaya', itemId: 'nanatsu_yoru', equip: true, hotkey: 1 },
     ],
   },
