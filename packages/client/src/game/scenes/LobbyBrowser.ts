@@ -11,8 +11,9 @@ const POLL_INTERVAL_MS = 3000;
  */
 export class LobbyBrowser extends Scene {
   private match!: NakamaMatchClient;
-  private listText!: Phaser.GameObjects.Text;
+  private listText!: Phaser.GameObjects.Text; // empty-state placeholder only
   private statusText!: Phaser.GameObjects.Text;
+  private rowTexts: Phaser.GameObjects.Text[] = [];
   private rowZones: Phaser.GameObjects.Zone[] = [];
   private listings: MatchListing[] = [];
   private pollEvent?: Phaser.Time.TimerEvent;
@@ -72,7 +73,9 @@ export class LobbyBrowser extends Scene {
   shutdown(): void {
     this.pollEvent?.remove();
     for (const z of this.rowZones) z.destroy();
+    for (const t of this.rowTexts) t.destroy();
     this.rowZones = [];
+    this.rowTexts = [];
   }
 
   private async refresh(): Promise<void> {
@@ -91,34 +94,37 @@ export class LobbyBrowser extends Scene {
 
   private renderList(): void {
     for (const z of this.rowZones) z.destroy();
+    for (const t of this.rowTexts) t.destroy();
     this.rowZones = [];
+    this.rowTexts = [];
 
     if (this.listings.length === 0) {
       this.listText.setText('No open lobbies. Create one to start.');
       return;
     }
+    this.listText.setText('');
 
-    const lines = this.listings
-      .map(
-        (m, i) =>
-          `${String(i + 1).padStart(2, ' ')}.  ${m.label.name.padEnd(30, ' ')}  ${m.label.phase.padEnd(8, ' ')}  ${m.size}/22`,
-      )
-      .join('\n');
-    this.listText.setText(lines);
-
+    // One Text + Zone per row so hover highlight only paints the hovered
+    // row, not the whole list.
     const lineHeight = 22;
     for (let i = 0; i < this.listings.length; i++) {
+      const m = this.listings[i];
+      if (!m) continue;
       const y = 250 + i * lineHeight;
+      const line = `${String(i + 1).padStart(2, ' ')}.  ${m.label.name.padEnd(30, ' ')}  ${m.label.phase.padEnd(8, ' ')}  ${m.size}/22`;
+      const txt = this.add.text(60, y, line, {
+        fontFamily: 'Courier New',
+        fontSize: 16,
+        color: '#dddddd',
+      });
       const zone = this.add
         .zone(60, y, this.scale.gameSize.width - 120, lineHeight)
         .setOrigin(0, 0)
         .setInteractive({ useHandCursor: true });
-      zone.on('pointerover', () => this.listText.setColor('#ffffaa'));
-      zone.on('pointerout', () => this.listText.setColor('#dddddd'));
-      zone.on('pointerdown', () => {
-        const listing = this.listings[i];
-        if (listing) this.handleJoin(listing.matchId);
-      });
+      zone.on('pointerover', () => txt.setColor('#ffffaa'));
+      zone.on('pointerout', () => txt.setColor('#dddddd'));
+      zone.on('pointerdown', () => this.handleJoin(m.matchId));
+      this.rowTexts.push(txt);
       this.rowZones.push(zone);
     }
   }

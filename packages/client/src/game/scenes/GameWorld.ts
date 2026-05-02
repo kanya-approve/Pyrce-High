@@ -1,16 +1,18 @@
 import {
   ATLAS_KEY,
-  BLOODY_ITEM_SPRITES,
   CHARACTER_SPRITES,
   CONTAINER_SPRITES,
+  DIRECTION_DELTAS,
   DOOR_SPRITES,
   type Facing,
+  HAIR_OPTIONS_FEMALE,
   HAIR_OPTIONS_MALE,
   hairFrame,
   hairWalkFrames,
   ITEM_SPRITES,
   ITEMS,
   OpCode,
+  wieldedItemFrame,
   type PublicCorpse,
   type PublicGroundItem,
   type PublicPlayerInGame,
@@ -69,8 +71,16 @@ import {
 } from '../../state/inventory';
 
 const TILE = 24;
-const MOVE_TWEEN_MS = 150;
-const INPUT_THROTTLE_MS = 130;
+/** `Phaser.TintModes.FILL` — Phaser global isn't exposed in the ESM build. */
+const TINT_FILL = 1;
+
+// Server cooldown is MOVE_COOLDOWN_TICKS=1 tick @ 10Hz = 100ms between
+// accepted moves. Match the tween to that so a held arrow flows continuously
+// from one tile to the next without an idle pop-frame between steps.
+const MOVE_TWEEN_MS = 110;
+// Send a touch faster than the server cadence so the next intent is in the
+// queue when the cooldown expires; the server silently drops extras.
+const INPUT_THROTTLE_MS = 90;
 
 interface GameWorldData {
   matchId: string;
@@ -84,7 +94,6 @@ interface PlayerSprite {
   rect: Phaser.GameObjects.Sprite;
   hair: Phaser.GameObjects.Sprite;
   hairId: string;
-  hand?: Phaser.GameObjects.Image;
   outline: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
   hpBg: Phaser.GameObjects.Rectangle;
@@ -92,6 +101,9 @@ interface PlayerSprite {
   crown?: Phaser.GameObjects.Image;
   state: PublicPlayerInGame;
   tween?: Phaser.Tweens.Tween;
+  /** Wielded-weapon underlay (DM's `underlays += knife.dmi`). */
+  weapon?: Phaser.GameObjects.Image;
+  equippedItemId?: string | null;
 }
 
 interface GroundSprite {
@@ -109,7 +121,6 @@ interface CorpseSprite {
 
 export class GameWorld extends Scene {
   private match!: NakamaMatchClient;
-  private matchId!: string;
   private offMatchData: (() => void) | null = null;
   private map = tilemapData as TilemapJson;
   private players = new Map<string, PlayerSprite>();
@@ -121,35 +132,18 @@ export class GameWorld extends Scene {
     D: Phaser.Input.Keyboard.Key;
   };
   private actionKeys!: {
-    E: Phaser.Input.Keyboard.Key;
-    F: Phaser.Input.Keyboard.Key;
-    G: Phaser.Input.Keyboard.Key;
-    C: Phaser.Input.Keyboard.Key;
-    I: Phaser.Input.Keyboard.Key;
-    V: Phaser.Input.Keyboard.Key;
-    K: Phaser.Input.Keyboard.Key;
-    B: Phaser.Input.Keyboard.Key;
-    R: Phaser.Input.Keyboard.Key;
-    Q: Phaser.Input.Keyboard.Key;
-    P: Phaser.Input.Keyboard.Key;
-    H: Phaser.Input.Keyboard.Key;
-    X: Phaser.Input.Keyboard.Key;
-    Y: Phaser.Input.Keyboard.Key;
-    O: Phaser.Input.Keyboard.Key;
-    M: Phaser.Input.Keyboard.Key;
-    L: Phaser.Input.Keyboard.Key;
-    J: Phaser.Input.Keyboard.Key;
-    N: Phaser.Input.Keyboard.Key;
-    Z: Phaser.Input.Keyboard.Key;
+    ENTER: Phaser.Input.Keyboard.Key;
+    NUMPAD_FIVE: Phaser.Input.Keyboard.Key;
+    CTRL: Phaser.Input.Keyboard.Key;
     ONE: Phaser.Input.Keyboard.Key;
     TWO: Phaser.Input.Keyboard.Key;
     THREE: Phaser.Input.Keyboard.Key;
     FOUR: Phaser.Input.Keyboard.Key;
     FIVE: Phaser.Input.Keyboard.Key;
   };
+  private nameRevealActive = false;
   private sprintActive = false;
   private lastInputAt = 0;
-  private statusText?: Phaser.GameObjects.Text;
   private inventory: ClientInventory = newClientInventory();
   private gameInfo: ClientGameInfo = newClientGameInfo();
   private groundSprites = new Map<string, GroundSprite>();
@@ -164,15 +158,12 @@ export class GameWorld extends Scene {
   private lightsOff = new Set<string>();
   private bloodDrips: Phaser.GameObjects.GameObject[] = [];
   private cameraReturnTimer?: Phaser.Time.TimerEvent;
-  private hostUserId: string | null = null;
 
   constructor() {
     super('GameWorld');
   }
 
   init(data: GameWorldData): void {
-    this.matchId = data.matchId;
-    this.hostUserId = data.hostUserId ?? null;
     this.players.clear();
     this.groundSprites.clear();
     this.inventory = newClientInventory();
@@ -209,135 +200,88 @@ export class GameWorld extends Scene {
       // chat HTMLInputElement when it's focused. We poll isDown ourselves so
       // capture isn't needed. Arrows also disabled so chat-cursor navigation
       // and Tab/Enter behaviour aren't broken inside the input field.
+      // Original DM keymap (Skinned.dmf macro section): WASD/arrows for
+      // 8-direction movement, Shift to sprint, 1-5 for hotkey slots,
+      // Enter for "Takethatthing" (pickup/interact), NumPad5 for PDA,
+      // Ctrl held for see-names. Everything else is a right-click verb on
+      // the relevant target — keeps the keyboard surface tiny.
       this.cursors = this.input.keyboard.addKeys(
         { up: 'UP', down: 'DOWN', left: 'LEFT', right: 'RIGHT', space: 'SPACE', shift: 'SHIFT' },
         false,
       ) as typeof this.cursors;
       this.wasdKeys = this.input.keyboard.addKeys('W,A,S,D', false) as typeof this.wasdKeys;
       this.actionKeys = this.input.keyboard.addKeys(
-        'E,F,G,C,I,V,K,B,R,Q,P,H,X,Y,O,M,L,J,N,Z,ONE,TWO,THREE,FOUR,FIVE',
+        'ENTER,NUMPAD_FIVE,CTRL,ONE,TWO,THREE,FOUR,FIVE',
         false,
       ) as typeof this.actionKeys;
       const guard = (fn: () => void) => () => {
         if (isTextInputFocused()) return;
         fn();
       };
-      this.actionKeys.E.on(
+      // Enter = "Takethatthing" — pickup item / open container / open
+      // door / interact with whatever is at-or-adjacent in facing dir.
+      this.actionKeys.ENTER.on(
         'down',
         guard(() => this.handleInteract()),
       );
-      this.actionKeys.F.on(
+      // NumPad5 = open the PDA inventory item if held.
+      this.actionKeys.NUMPAD_FIVE.on(
         'down',
-        guard(() => this.handleAttack()),
+        guard(() => this.handleUsePda()),
       );
-      this.actionKeys.G.on(
+      // Ctrl held = name reveal toggle (see-names verb in DM).
+      this.actionKeys.CTRL.on(
         'down',
-        guard(() => this.handleDropEquipped()),
+        guard(() => this.toggleNameReveal(true)),
       );
-      this.actionKeys.C.on(
-        'down',
-        guard(() => this.handleCraft('spear')),
+      this.actionKeys.CTRL.on(
+        'up',
+        guard(() => this.toggleNameReveal(false)),
       );
-      this.actionKeys.I.on(
-        'down',
-        guard(() => this.scene.get('Hud').events.emit('inv:refresh')),
-      );
-      this.actionKeys.V.on(
-        'down',
-        guard(() => this.handleEndGameVote()),
-      );
-      this.actionKeys.K.on(
-        'down',
-        guard(() => this.openVoteKickPicker()),
-      );
-      this.actionKeys.B.on(
-        'down',
-        guard(() => this.handleDoppelCopy()),
-      );
-      this.actionKeys.R.on(
-        'down',
-        guard(() => this.handleVampireDrain()),
-      );
-      this.actionKeys.Q.on(
-        'down',
-        guard(() => this.handleRoleAbility()),
-      );
-      this.actionKeys.P.on(
-        'down',
-        guard(() => this.handlePullCorpse()),
-      );
-      this.actionKeys.H.on(
-        'down',
-        guard(() => void this.match.sendMatch(OpCode.C2S_WASH, {})),
-      );
-      this.actionKeys.X.on(
-        'down',
-        guard(() => void this.match.sendMatch(OpCode.C2S_SHOVE, {})),
-      );
-      this.actionKeys.Y.on(
-        'down',
-        guard(() => this.handlePushContainer()),
-      );
-      this.actionKeys.O.on(
-        'down',
-        guard(() => this.handlePushCorpse()),
-      );
-      this.actionKeys.M.on(
-        'down',
-        guard(() => this.handlePlantOnTarget()),
-      );
-      this.actionKeys.L.on(
-        'down',
-        guard(() => this.handleLightSwitch()),
-      );
-      this.actionKeys.J.on(
-        'down',
-        guard(() => void this.match.sendMatch(OpCode.C2S_TAPE_VIEW, {})),
-      );
-      this.actionKeys.N.on(
-        'down',
-        guard(() => this.handleCameraCycle()),
-      );
-      this.actionKeys.Z.on(
-        'down',
-        guard(() => void this.match.sendMatch(OpCode.C2S_TAPE_DELETE, {})),
-      );
-      this.actionKeys.ONE.on(
-        'down',
-        guard(() => this.handleHotkey(1)),
-      );
-      this.actionKeys.TWO.on(
-        'down',
-        guard(() => this.handleHotkey(2)),
-      );
-      this.actionKeys.THREE.on(
-        'down',
-        guard(() => this.handleHotkey(3)),
-      );
-      this.actionKeys.FOUR.on(
-        'down',
-        guard(() => this.handleHotkey(4)),
-      );
-      this.actionKeys.FIVE.on(
-        'down',
-        guard(() => this.handleHotkey(5)),
-      );
+      this.actionKeys.ONE.on('down', guard(() => this.handleHotkey(1)));
+      this.actionKeys.TWO.on('down', guard(() => this.handleHotkey(2)));
+      this.actionKeys.THREE.on('down', guard(() => this.handleHotkey(3)));
+      this.actionKeys.FOUR.on('down', guard(() => this.handleHotkey(4)));
+      this.actionKeys.FIVE.on('down', guard(() => this.handleHotkey(5)));
     }
-
-    this.statusText = this.add
-      .text(12, 12, this.statusLine(), {
-        fontFamily: 'Courier New',
-        fontSize: 14,
-        color: '#ffffff',
-        backgroundColor: '#000000aa',
-        padding: { left: 6, right: 6, top: 4, bottom: 4 },
-      })
-      .setScrollFactor(0)
-      .setDepth(1000);
 
     // Persistent HUD overlay + chat overlay + lighting overlay.
     this.scene.launch('Hud', { inventory: () => this.inventory, game: () => this.gameInfo });
     if (!this.scene.isActive('ChatOverlay')) this.scene.launch('ChatOverlay');
+    // HUD slot button → fire the same handler as a 1-5 keypress.
+    this.events.on('hud:hotkey', (slot: 1 | 2 | 3 | 4 | 5) => this.handleHotkey(slot));
+    // Re-emit a refresh once the Hud's create() has had a chance to wire
+    // its listeners. Without this, an S2C_ROLE_ASSIGNED that arrives in
+    // the same tick as the Hud launch is missed and the role label stays
+    // blank until the next clock tick.
+    this.time.delayedCall(100, () => {
+      this.scene.get('Hud').events.emit('game:refresh');
+      this.scene.get('Hud').events.emit('inv:refresh');
+    });
+
+    // Right-click on empty world tile → open the global verb menu.
+    // (Player sprites have their own pointerdown that fires earlier.)
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (!pointer.rightButtonDown()) return;
+      const objs = this.input.hitTestPointer(pointer);
+      if (objs.length > 0) return;
+      const ev = pointer.event as MouseEvent;
+      this.openWorldContextMenu(ev.clientX, ev.clientY);
+    });
+    // Suppress the browser's native right-click menu while playing. We
+    // attach to document so it covers the canvas, the wrapper div, and
+    // any DOM overlays we open ourselves.
+    const suppressCtxMenu = (e: MouseEvent) => {
+      // Allow the browser menu inside our own DOM popups (chat <input>
+      // etc.) so users can paste / select.
+      const tgt = e.target as HTMLElement | null;
+      if (tgt && tgt.closest('input, textarea, .pyrce-allow-ctx')) return;
+      e.preventDefault();
+    };
+    document.addEventListener('contextmenu', suppressCtxMenu);
+    this.events.once('shutdown', () => {
+      document.removeEventListener('contextmenu', suppressCtxMenu);
+    });
     this.scene.launch('Lighting', {
       game: () => this.gameInfo,
       inventory: () => this.inventory,
@@ -656,7 +600,7 @@ export class GameWorld extends Scene {
         const row = document.createElement('div');
         row.style.cssText =
           'padding:4px 0;border-bottom:1px solid #224;color:' + (e.isAlive ? '#dddddd' : '#aa6666');
-        row.textContent = `${e.username.padEnd(14, ' ')} ${e.condition}`;
+        row.textContent = `${e.displayName.padEnd(28, ' ')} ${e.condition}`;
         container.appendChild(row);
       }
     }
@@ -670,17 +614,16 @@ export class GameWorld extends Scene {
     setTimeout(() => container.parentElement && container.remove(), 30000);
   }
 
-  /** Quick rotation tween on the in-hand sprite to suggest a weapon swing. */
+  /** Brief jab tween on the body when a weapon swings — replaces the old in-hand fx. */
   playSwingFx(userId: string): void {
     const sprite = this.players.get(userId);
-    if (!sprite?.hand) return;
-    const hand = sprite.hand;
+    if (!sprite) return;
     this.tweens.add({
-      targets: hand,
-      angle: { from: 0, to: 60 },
-      duration: 80,
+      targets: sprite.rect,
+      scaleX: { from: 1, to: 1.15 },
+      scaleY: { from: 1, to: 0.9 },
+      duration: 70,
       yoyo: true,
-      onComplete: () => hand.setAngle(0),
     });
   }
 
@@ -927,7 +870,7 @@ export class GameWorld extends Scene {
     container.style.fontFamily = 'Arial, sans-serif';
     container.style.fontSize = '14px';
     container.style.textAlign = 'center';
-    container.innerHTML = `<div style="font-weight:bold;margin-bottom:10px">${req.searcherUsername} wants to search your victim's body.</div>`;
+    container.innerHTML = `<div style="font-weight:bold;margin-bottom:10px">${req.searcherDisplayName} wants to search your victim's body.</div>`;
     const yes = document.createElement('button');
     yes.textContent = 'Allow';
     yes.style.cssText =
@@ -1042,28 +985,94 @@ export class GameWorld extends Scene {
   private handlePushContainer(): void {
     const me = this.players.get(this.match.userId)?.state;
     if (!me) return;
-    let best: { x: number; y: number; dist: number } | null = null;
-    for (const c of this.containerHotspots) {
-      const dist = Math.max(Math.abs(c.x - me.x), Math.abs(c.y - me.y));
-      if (dist > 1) continue;
-      if (!best || dist < best.dist) best = { x: c.x, y: c.y, dist };
-    }
-    if (!best) {
-      this.notifyHud('No container to push');
+    const delta = DIRECTION_DELTAS[me.facing];
+    if (!delta) return;
+    const tx = me.x + delta.dx;
+    const ty = me.y + delta.dy;
+    const target = this.containerHotspots.find((c) => c.x === tx && c.y === ty);
+    if (!target) {
+      this.notifyHud('Nothing to push in front of you');
       return;
     }
-    void this.match.sendMatch(OpCode.C2S_CONTAINER_PUSH, { x: best.x, y: best.y });
+    this.pushContainerAwayFromMe(target.x, target.y);
+  }
+
+  /**
+   * Push a specific container away from the player. Re-orients the player
+   * to face it first so the server's facing-direction push lands the
+   * container on the far side. The container must be cardinal-adjacent
+   * (no diagonals — push only operates on N/S/E/W neighbours).
+   */
+  private pushContainerAwayFromMe(cx: number, cy: number): void {
+    const me = this.players.get(this.match.userId)?.state;
+    if (!me) return;
+    const dx = cx - me.x;
+    const dy = cy - me.y;
+    let dir: Facing | null = null;
+    if (dx === 0 && dy === -1) dir = 'N';
+    else if (dx === 0 && dy === 1) dir = 'S';
+    else if (dx === -1 && dy === 0) dir = 'W';
+    else if (dx === 1 && dy === 0) dir = 'E';
+    if (!dir) {
+      this.notifyHud('Move next to it (no diagonals)');
+      return;
+    }
+    // Update local facing immediately so the server-side check passes
+    // even if our last MOVE_INTENT was in another direction. The server
+    // sets `player.facing = req.dir` on every move intent (even blocked),
+    // so a blocked move toward the container is enough to align.
+    void this.match.sendMatch(OpCode.C2S_MOVE_INTENT, { dir });
+    // Tiny nudge to let the facing land before the push.
+    this.time.delayedCall(40, () => {
+      void this.match.sendMatch(OpCode.C2S_CONTAINER_PUSH, { x: cx, y: cy });
+    });
+  }
+
+  /**
+   * Right-click on a container → menu with Search / Push (if movable).
+   * Targets the specific container clicked, not the one in front.
+   */
+  private openContainerContextMenu(
+    cx: number,
+    cy: number,
+    stationed: boolean,
+    screenX: number,
+    screenY: number,
+  ): void {
+    const me = this.players.get(this.match.userId)?.state;
+    const dist = me ? Math.max(Math.abs(me.x - cx), Math.abs(me.y - cy)) : 99;
+    const verbs: Array<{ label: string; run: () => void }> = [];
+    if (dist <= 1) {
+      verbs.push({
+        label: 'Search',
+        run: () => void this.match.sendMatch(OpCode.C2S_CONTAINER_LOOK, { x: cx, y: cy }),
+      });
+      if (!stationed) {
+        verbs.push({ label: 'Push (away)', run: () => this.pushContainerAwayFromMe(cx, cy) });
+      }
+    } else {
+      verbs.push({ label: '(walk closer)', run: () => {} });
+    }
+    this.renderContextMenu(`Container @ ${cx},${cy}`, verbs, screenX, screenY);
   }
 
   private handlePushCorpse(): void {
     const me = this.players.get(this.match.userId)?.state;
     if (!me) return;
-    const target = this.nearestAdjacentCorpse(me.x, me.y);
+    // Push the corpse directly in front of the player so the server's
+    // facing-direction push moves it away, not toward us.
+    const delta = DIRECTION_DELTAS[me.facing];
+    if (!delta) return;
+    const tx = me.x + delta.dx;
+    const ty = me.y + delta.dy;
+    const target = Array.from(this.corpseSprites.values()).find(
+      (c) => c.data.x === tx && c.data.y === ty,
+    );
     if (!target) {
-      this.notifyHud('No corpse to push');
+      this.notifyHud('No corpse in front of you');
       return;
     }
-    void this.match.sendMatch(OpCode.C2S_CORPSE_PUSH, { corpseId: target });
+    void this.match.sendMatch(OpCode.C2S_CORPSE_PUSH, { corpseId: target.corpseId });
   }
 
   /**
@@ -1108,6 +1117,204 @@ export class GameWorld extends Scene {
     this.notifyHud(`Planted ${ITEMS[inst.itemId]?.name ?? inst.itemId}`);
   }
 
+  /** NumPad5 from the original macro: open the PDA if it's in the inventory. */
+  private handleUsePda(): void {
+    const pda = this.inventory.items.find((i) => i.itemId === 'pda');
+    if (!pda) {
+      this.notifyHud('No PDA');
+      return;
+    }
+    void this.match.sendMatch(OpCode.C2S_INV_USE, { instanceId: pda.instanceId });
+  }
+
+  /** Ctrl-held name reveal: brighten labels and (todo) reveal classroom info. */
+  private toggleNameReveal(on: boolean): void {
+    if (this.nameRevealActive === on) return;
+    this.nameRevealActive = on;
+    for (const sprite of this.players.values()) {
+      sprite.label.setColor(on ? '#ffe680' : '#ffffff');
+    }
+  }
+
+  /** Render a generic vertical menu of verbs at (screenX, screenY). */
+  private renderContextMenu(
+    title: string,
+    verbs: Array<{ label: string; run: () => void }>,
+    screenX: number,
+    screenY: number,
+  ): void {
+    document.querySelectorAll('.pyrce-ctx-menu').forEach((n) => n.remove());
+    if (verbs.length === 0) verbs.push({ label: '(no verbs)', run: () => {} });
+    const m = document.createElement('div');
+    m.className = 'pyrce-ctx-menu';
+    m.style.cssText = `position:fixed;left:${screenX}px;top:${screenY}px;z-index:3000;
+      background:#0d1320;border:1px solid #4477aa;color:#dde;
+      font-family:Arial,sans-serif;font-size:13px;min-width:160px;
+      box-shadow:0 4px 14px #0008;`;
+    const head = document.createElement('div');
+    head.textContent = title;
+    head.style.cssText = 'padding:6px 10px;border-bottom:1px solid #224;color:#88aaee;';
+    m.appendChild(head);
+    for (const v of verbs) {
+      const row = document.createElement('div');
+      row.textContent = v.label;
+      row.style.cssText = 'padding:6px 10px;cursor:pointer;';
+      row.addEventListener('mouseenter', () => (row.style.background = '#1a2740'));
+      row.addEventListener('mouseleave', () => (row.style.background = ''));
+      row.addEventListener('click', () => {
+        v.run();
+        m.remove();
+      });
+      m.appendChild(row);
+    }
+    document.body.appendChild(m);
+    const dismiss = (e: MouseEvent) => {
+      if (!m.contains(e.target as Node)) {
+        m.remove();
+        document.removeEventListener('mousedown', dismiss, true);
+      }
+    };
+    setTimeout(() => document.addEventListener('mousedown', dismiss, true), 0);
+  }
+
+  /**
+   * Right-clicking another player → verbs that apply to that target. Role
+   * and distance are evaluated client-side so the menu only lists what's
+   * possible; the server re-checks every action.
+   */
+  private openPlayerContextMenu(target: PublicPlayerInGame, screenX: number, screenY: number): void {
+    const me = this.players.get(this.match.userId)?.state;
+    const myRole = this.gameInfo.role?.roleId;
+    const isSelf = target.userId === this.match.userId;
+    const dist = me ? Math.max(Math.abs(me.x - target.x), Math.abs(me.y - target.y)) : 99;
+
+    const verbs: Array<{ label: string; run: () => void }> = [];
+    if (!isSelf && dist <= 7) {
+      verbs.push({
+        label: 'View Profile',
+        run: () => void this.match.sendMatch(OpCode.C2S_VIEW_PROFILE, { userId: target.userId }),
+      });
+    }
+    if (!isSelf && dist <= 1 && target.isAlive) {
+      verbs.push({ label: 'Attack', run: () => this.handleAttack() });
+      verbs.push({
+        label: 'Shove',
+        run: () => void this.match.sendMatch(OpCode.C2S_SHOVE, {}),
+      });
+      // Plant only makes sense if you're holding something.
+      if (this.inventory.equipped) {
+        verbs.push({ label: 'Plant Item', run: () => this.handlePlantOnTarget() });
+      }
+    }
+    if (!isSelf) {
+      verbs.push({
+        label: 'Vote-Kick',
+        run: () =>
+          void this.match.sendMatch(OpCode.C2S_VOTE_KICK, { targetUserId: target.userId }),
+      });
+    }
+    // Doppel/Vampire actually target an adjacent corpse, not a player —
+    // surface them only when there IS such a corpse available.
+    const adjCorpse =
+      me &&
+      Array.from(this.corpseSprites.values()).find(
+        (c) => Math.max(Math.abs(me.x - c.data.x), Math.abs(me.y - c.data.y)) <= 1,
+      );
+    if (myRole === 'doppelganger' && adjCorpse) {
+      verbs.push({ label: 'Doppel: Copy', run: () => this.handleDoppelCopy() });
+    }
+    if (myRole === 'vampire' && adjCorpse) {
+      verbs.push({ label: 'Vampire: Drain', run: () => this.handleVampireDrain() });
+    }
+    this.renderContextMenu(
+      target.disguiseDisplayName ?? target.displayName,
+      verbs,
+      screenX,
+      screenY,
+    );
+  }
+
+  /**
+   * Right-clicking the world (empty tile) → general verbs that don't need
+   * a player target: drop, vote, role abilities, light switch, cameras…
+   */
+  private openWorldContextMenu(screenX: number, screenY: number): void {
+    const me = this.players.get(this.match.userId)?.state;
+    const myRole = this.gameInfo.role?.roleId;
+    const myRoleId = myRole ?? '';
+    const verbs: Array<{ label: string; run: () => void }> = [];
+
+    const adj = (x: number, y: number): boolean =>
+      !!me && Math.max(Math.abs(me.x - x), Math.abs(me.y - y)) <= 1;
+    const hasAdjacent = (list?: ReadonlyArray<{ x: number; y: number }>) =>
+      !!list && list.some((e) => adj(e.x, e.y));
+    const hasItem = (id: string) => this.inventory.items.some((i) => i.itemId === id);
+
+    if (this.inventory.equipped) {
+      verbs.push({ label: 'Drop Equipped', run: () => this.handleDropEquipped() });
+    }
+    // Wash needs a sink (bathroom floor) — server checks the tile path; we
+    // approximate by requiring the player to actually be bloody.
+    if (me && (me.bloody ?? 0) > 0) {
+      verbs.push({
+        label: 'Wash Blood',
+        run: () => void this.match.sendMatch(OpCode.C2S_WASH, {}),
+      });
+    }
+    if (hasAdjacent(this.map.lightSwitches)) {
+      verbs.push({ label: 'Light Switch', run: () => this.handleLightSwitch() });
+    }
+    // Push container: any non-stationed container adjacent.
+    const pushableContainers = (this.map.containers ?? []).filter(
+      (c) => !c.kind.includes('Containers_Stationed'),
+    );
+    if (hasAdjacent(pushableContainers)) {
+      verbs.push({ label: 'Push Container', run: () => this.handlePushContainer() });
+    }
+    const adjacentCorpse = Array.from(this.corpseSprites.values()).find((c) =>
+      adj(c.data.x, c.data.y),
+    );
+    if (adjacentCorpse) {
+      verbs.push({ label: 'Push Corpse', run: () => this.handlePushCorpse() });
+      verbs.push({ label: 'Pull Corpse', run: () => this.handlePullCorpse() });
+    }
+    if (hasAdjacent(this.map.cameras) || hasAdjacent(this.map.monitors)) {
+      verbs.push({ label: 'Camera View', run: () => this.handleCameraCycle() });
+    }
+    if (hasAdjacent(this.map.monitors)) {
+      verbs.push({
+        label: 'View Tapes',
+        run: () => void this.match.sendMatch(OpCode.C2S_TAPE_VIEW, {}),
+      });
+      // Only the killer roles can tamper with tapes (DM Delete_Tapes verb).
+      if (
+        myRoleId === 'killer' ||
+        myRoleId === 'witch' ||
+        myRoleId === 'vampire' ||
+        myRoleId === 'doppelganger'
+      ) {
+        verbs.push({
+          label: 'Delete Tapes',
+          run: () => void this.match.sendMatch(OpCode.C2S_TAPE_DELETE, {}),
+        });
+      }
+    }
+    // Role abilities are role-specific. List the ones the current role has.
+    if (myRoleId === 'witch' || myRoleId === 'vampire') {
+      verbs.push({ label: 'Use Role Ability', run: () => this.handleRoleAbility() });
+    }
+    // Craft Spear: Knife + Mop + Tape (Containers.dm recipe).
+    if (hasItem('knife') && hasItem('mop') && hasItem('tape')) {
+      verbs.push({ label: 'Craft Spear', run: () => this.handleCraft('spear') });
+    }
+    // Always-on verbs.
+    verbs.push({ label: 'Vote End Game', run: () => this.handleEndGameVote() });
+    if (this.players.size > 1) {
+      verbs.push({ label: 'Vote-Kick (pick)', run: () => this.openVoteKickPicker() });
+    }
+    this.renderContextMenu('Verbs', verbs, screenX, screenY);
+  }
+
   private handleHotkey(slot: 1 | 2 | 3 | 4 | 5): void {
     const ref = this.inventory.hotkeys[slot - 1];
     if (!ref) return;
@@ -1121,6 +1328,14 @@ export class GameWorld extends Scene {
           targetUserId,
         });
       });
+      return;
+    }
+    // Weapons toggle-equip; pressing the hotkey again unequips so the
+    // killer can re-hide the knife. Items with a `use` action (consumables)
+    // fire C2S_INV_USE; everything else just toggles equip too.
+    if (def?.weapon || !def?.use) {
+      const op = this.inventory.equipped === ref ? null : ref;
+      void this.match.sendMatch(OpCode.C2S_INV_EQUIP, { instanceId: op });
       return;
     }
     void this.match.sendMatch(OpCode.C2S_INV_USE, { instanceId: ref });
@@ -1152,7 +1367,7 @@ export class GameWorld extends Scene {
       if (sprite.userId === this.match.userId) continue;
       if (!sprite.state.isAlive) continue;
       const row = document.createElement('button');
-      row.textContent = sprite.state.username;
+      row.textContent = sprite.state.displayName;
       row.style.display = 'block';
       row.style.width = '100%';
       row.style.margin = '2px 0';
@@ -1203,9 +1418,14 @@ export class GameWorld extends Scene {
         if (!m) return;
         const sprite = this.players.get(m.userId);
         if (!sprite) {
+          // Late-arrival placeholder; the next initial snapshot fills in the
+          // real demographics. Use neutral defaults so the sprite renders.
           this.spawnPlayer({
             userId: m.userId,
-            username: m.userId,
+            displayName: '...',
+            gender: 'male',
+            hairId: 'BlackBoyHair',
+            hairColor: 'black',
             x: m.x,
             y: m.y,
             facing: m.facing,
@@ -1233,6 +1453,7 @@ export class GameWorld extends Scene {
         const f = parsePayload<S2CInvFull>(data);
         if (!f) return;
         applyInvFull(this.inventory, f);
+        this.scene.get('Hud').events.emit('inv:refresh');
         this.notifyHud(`inventory: ${this.inventory.items.length} items`);
         break;
       }
@@ -1280,24 +1501,16 @@ export class GameWorld extends Scene {
       case OpCode.S2C_CONTAINER_MOVED: {
         const moved = parsePayload<S2CContainerMoved>(data);
         if (!moved) return;
-        // Find the closest hotspot to the destination (within 1 tile of the
-        // old position) and re-stamp it at the new tile.
-        let best: { idx: number; d: number } | null = null;
-        for (let i = 0; i < this.containerHotspots.length; i++) {
-          const c = this.containerHotspots[i];
-          if (!c) continue;
-          const d = Math.max(Math.abs(c.x - moved.x), Math.abs(c.y - moved.y));
-          if (d > 1) continue;
-          if (!best || d < best.d) best = { idx: i, d };
-        }
-        if (best) {
-          const c = this.containerHotspots[best.idx];
-          if (c) {
-            c.x = moved.x;
-            c.y = moved.y;
-            c.id = `c@${moved.x},${moved.y}`;
-            c.rect.setPosition(moved.x * TILE + TILE / 2, moved.y * TILE + TILE / 2);
-          }
+        // Match by exact source coords — proximity matching mis-targets when
+        // multiple containers cluster within 1 tile of the destination.
+        const c = this.containerHotspots.find(
+          (h) => h.x === moved.fromX && h.y === moved.fromY,
+        );
+        if (c) {
+          c.x = moved.x;
+          c.y = moved.y;
+          c.id = `c@${moved.x},${moved.y}`;
+          c.rect.setPosition(moved.x * TILE + TILE / 2, moved.y * TILE + TILE / 2);
         }
         break;
       }
@@ -1340,7 +1553,7 @@ export class GameWorld extends Scene {
       case OpCode.S2C_EYE_OFFER: {
         const o = parsePayload<S2CEyeOffer>(data);
         if (!o) return;
-        this.openEyeOfferDialog(o.fromUsername);
+        this.openEyeOfferDialog(o.fromDisplayName);
         break;
       }
       case OpCode.S2C_PLAYER_HEALTH: {
@@ -1382,11 +1595,11 @@ export class GameWorld extends Scene {
             duration: 400,
           });
           s.rect.setTint(0x666666);
-          s.label.setText(`†${s.state.username}`);
+          s.label.setText(`†${d.victimRealName || s.state.displayName}`);
           this.updateHpBar(s);
         }
         if (d.userId === this.match.userId) this.showDeathOverlay(d);
-        this.notifyHud(`${s?.state.username ?? d.userId.slice(0, 6)} died (${d.cause})`);
+        this.notifyHud(`${d.victimRealName || s?.state.displayName || d.userId.slice(0, 6)} died (${d.cause})`);
         break;
       }
       case OpCode.S2C_CORPSE_SPAWN: {
@@ -1441,7 +1654,7 @@ export class GameWorld extends Scene {
       case OpCode.S2C_PROFILE_VIEW: {
         const p = parsePayload<S2CProfileView>(data);
         if (!p) return;
-        this.notifyHud(`${p.username}: ${p.condition} (${p.hp}/${p.maxHp})`);
+        this.notifyHud(`${p.displayName}: ${p.condition} (${p.hp}/${p.maxHp})`);
         break;
       }
       case OpCode.S2C_SEARCH_REQUEST: {
@@ -1459,8 +1672,8 @@ export class GameWorld extends Scene {
       case OpCode.S2C_VOTE_KICK_TALLY: {
         const t = parsePayload<S2CVoteKickTally>(data);
         if (!t) return;
-        if (t.resolved) this.notifyHud(`${t.targetUsername} was vote-kicked`);
-        else this.notifyHud(`Kick vote ${t.targetUsername}: ${t.yes}/${t.alive}`);
+        if (t.resolved) this.notifyHud(`${t.targetDisplayName} was vote-kicked`);
+        else this.notifyHud(`Kick vote ${t.targetDisplayName}: ${t.yes}/${t.alive}`);
         break;
       }
       case OpCode.S2C_SELF_ROLE_STATE: {
@@ -1502,7 +1715,7 @@ export class GameWorld extends Scene {
       case OpCode.S2C_PAPER_RECEIVED: {
         const p = parsePayload<S2CPaperReceived>(data);
         if (!p) return;
-        this.notifyHud(`Paper from ${p.fromUsername}: "${p.text.slice(0, 80)}"`);
+        this.notifyHud(`Paper from ${p.fromDisplayName}: "${p.text.slice(0, 80)}"`);
         break;
       }
       case OpCode.S2C_DOOR_CODE: {
@@ -1521,8 +1734,11 @@ export class GameWorld extends Scene {
         const r = parsePayload<S2CRoleAssigned>(data);
         if (!r) return;
         this.gameInfo.role = r;
-        this.notifyHud(`You are: ${r.roleName}`);
-        this.scene.get('Hud').events.emit('game:refresh');
+        this.time.delayedCall(0, () => {
+          this.scene.get('Hud').events.emit('game:refresh');
+          this.scene.get('ChatOverlay').events.emit('chat:system', `You are: ${r.roleName}`);
+        });
+        this.showRoleBanner(r);
         break;
       }
       case OpCode.S2C_CLOCK_TICK: {
@@ -1537,7 +1753,10 @@ export class GameWorld extends Scene {
         if (!r) return;
         this.gameInfo.result = r;
         // Hand off to the EndScene; both GameWorld + Hud teardown.
-        this.scene.start('EndScene', { result: r });
+        this.scene.start('EndScene', {
+          result: r,
+          matchId: this.match.currentMatchId ?? '',
+        });
         this.scene.stop('Hud');
         break;
       }
@@ -1547,6 +1766,65 @@ export class GameWorld extends Scene {
 
   private notifyHud(msg: string): void {
     this.scene.get('Hud').events.emit('inv:notify', msg);
+  }
+
+  /**
+   * Big top-of-screen role-reveal banner shown for ~5s at round start.
+   * Killer roles are tinted red so the player knows immediately. Self-only;
+   * driven entirely by the local S2C_ROLE_ASSIGNED.
+   */
+  private showRoleBanner(r: { roleName: string; description?: string; roleId: string }): void {
+    const { width } = this.scale.gameSize;
+    const danger = ['killer', 'witch', 'vampire', 'doppelganger', 'kira', 'shinigami'];
+    const isKillerRole = danger.includes(r.roleId);
+    const color = isKillerRole ? '#ff5566' : '#88ddff';
+    const banner = this.add
+      .text(width / 2, 60, `You are: ${r.roleName}`, {
+        fontFamily: 'Arial Black',
+        fontSize: 28,
+        color,
+        stroke: '#000000',
+        strokeThickness: 6,
+        backgroundColor: '#000000bb',
+        padding: { left: 16, right: 16, top: 8, bottom: 8 },
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(2500);
+    if (r.description) {
+      const desc = this.add
+        .text(width / 2, 110, r.description, {
+          fontFamily: 'Arial',
+          fontSize: 14,
+          color: '#dddddd',
+          stroke: '#000000',
+          strokeThickness: 4,
+          backgroundColor: '#000000bb',
+          padding: { left: 12, right: 12, top: 4, bottom: 4 },
+          wordWrap: { width: 480 },
+        })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(2500);
+      this.tweens.add({
+        targets: [banner, desc],
+        alpha: 0,
+        delay: 5000,
+        duration: 800,
+        onComplete: () => {
+          banner.destroy();
+          desc.destroy();
+        },
+      });
+    } else {
+      this.tweens.add({
+        targets: banner,
+        alpha: 0,
+        delay: 5000,
+        duration: 800,
+        onComplete: () => banner.destroy(),
+      });
+    }
   }
 
   /**
@@ -1672,12 +1950,6 @@ export class GameWorld extends Scene {
 
   // ---------- rendering helpers ----------
 
-  private statusLine(): string {
-    const me = this.players.get(this.match.userId)?.state;
-    const pos = me ? `(${me.x},${me.y}) facing ${me.facing}` : '(spectating)';
-    return `pyrce ${this.matchId.slice(0, 8)} | ${this.match.username} ${pos} | players: ${this.players.size}`;
-  }
-
   private readInputDirection(): Facing | null {
     if (!this.input.keyboard) return null;
     const up = this.cursors.up?.isDown || this.wasdKeys.W.isDown;
@@ -1696,27 +1968,32 @@ export class GameWorld extends Scene {
   }
 
   /**
-   * Register one walk animation per cardinal direction. Keys:
-   * `male.walk.S`, `male.walk.N`, `male.walk.E`, `male.walk.W`.
-   * Played on `S2C_PLAYER_MOVED`; we let it run through one cycle and
-   * leave the sprite on the idle frame between steps.
+   * Register walk animations per (gender, direction). Keys:
+   * `male.walk.S` / `female.walk.S` / etc. Played on `S2C_PLAYER_MOVED`;
+   * we let it run through one cycle and leave the sprite on the idle
+   * frame between steps.
    */
   private registerCharacterAnims(): void {
     if (this.anims.exists('male.walk.S')) return;
     const atlasTex = this.textures.get(ATLAS_KEY);
     for (const dir of ['S', 'N', 'E', 'W'] as const) {
-      this.anims.create({
-        key: `male.walk.${dir}`,
-        frames: [0, 1, 2, 3].map((f) => ({
-          key: ATLAS_KEY,
-          frame: `hair-overlays/MaleBase/_/${dir}/${f}`,
-        })),
-        frameRate: 10,
-        repeat: 0,
-      });
+      for (const [g, base] of [
+        ['male', 'MaleBase'],
+        ['female', 'FemaleBase'],
+      ] as const) {
+        this.anims.create({
+          key: `${g}.walk.${dir}`,
+          frames: [0, 1, 2, 3].map((f) => ({
+            key: ATLAS_KEY,
+            frame: `hair-overlays/${base}/_/${dir}/${f}`,
+          })),
+          frameRate: 10,
+          repeat: 0,
+        });
+      }
       // One walk anim per (hair, dir). Skip hairs whose frames aren't in
       // the atlas (sparse coverage of some hair option names).
-      for (const hair of HAIR_OPTIONS_MALE) {
+      for (const hair of [...HAIR_OPTIONS_MALE, ...HAIR_OPTIONS_FEMALE]) {
         const frames = hairWalkFrames(hair, dir).filter((k) => atlasTex.has(k));
         if (frames.length === 0) continue;
         this.anims.create({
@@ -1799,61 +2076,57 @@ export class GameWorld extends Scene {
     }
     const fx = this.add.sprite(worldX, worldY, ATLAS_KEY).setDepth(900).setScale(2);
     fx.play('fx.smoke');
-    fx.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => fx.destroy());
+    fx.once('animationcomplete', () => fx.destroy());
   }
 
   /**
-   * Render (or update) a tiny in-hand sprite next to the player showing what
-   * they're holding. Cosmetic only — the inventory state of remote players
-   * is otherwise hidden.
+   * Render the wielded weapon as an underlay beneath the player, the way
+   * DM did (`mob.underlays += 'knife.dmi'`). One frame per facing — the
+   * weapon icon "rotates" as the player turns. Atomic update: replaces
+   * the underlay sprite when the equipped item or facing changes.
    */
-  private updateEquippedSprite(sprite: PlayerSprite, itemId: string | null, bloody = false): void {
-    const atlasTex = this.textures.get(ATLAS_KEY);
-    const bloodyFrame = bloody && itemId ? BLOODY_ITEM_SPRITES[itemId] : undefined;
-    const normalFrame = itemId ? ITEM_SPRITES[itemId] : undefined;
-    const frame = bloodyFrame && atlasTex.has(bloodyFrame) ? bloodyFrame : normalFrame;
-    if (!frame || !atlasTex.has(frame)) {
-      sprite.hand?.destroy();
-      delete sprite.hand;
+  private updateEquippedSprite(sprite: PlayerSprite, itemId: string | null, _bloody = false): void {
+    sprite.equippedItemId = itemId;
+    const cardinal = facingToCardinal(sprite.state.facing);
+    const frame = itemId ? wieldedItemFrame(itemId, cardinal) : undefined;
+    const atlas = this.textures.get(ATLAS_KEY);
+    if (!frame || !atlas.has(frame)) {
+      sprite.weapon?.destroy();
+      delete sprite.weapon;
       return;
     }
-    if (!sprite.hand) {
-      sprite.hand = this.add
-        .image(sprite.rect.x + TILE / 2 - 2, sprite.rect.y + 2, ATLAS_KEY, frame)
-        .setScale(0.6)
-        .setDepth(sprite.rect.depth + 0.015);
+    if (!sprite.weapon) {
+      // Underlay sits between the floor (depth 0) and the body (depth 2).
+      sprite.weapon = this.add
+        .image(sprite.rect.x, sprite.rect.y, ATLAS_KEY, frame)
+        .setDepth(1.95);
     } else {
-      sprite.hand.setFrame(frame);
+      sprite.weapon.setFrame(frame);
     }
   }
 
-  /** Stable hair pick from userId so the same player looks the same each round. */
-  private pickHair(userId: string): string {
-    let h = 0;
-    for (let i = 0; i < userId.length; i++) h = (h * 31 + userId.charCodeAt(i)) >>> 0;
-    return HAIR_OPTIONS_MALE[h % HAIR_OPTIONS_MALE.length] ?? 'BlackBoyHair';
-  }
 
   private spawnPlayer(p: PublicPlayerInGame): void {
     const x = p.x * TILE + TILE / 2;
     const y = p.y * TILE + TILE / 2;
-    const isMe = p.userId === this.match.userId;
-    // Friendly tint ring under the sprite — gives me-vs-others visual cue
-    // until we have proper outlines / nameplates per faction.
-    const ringColor = isMe ? 0x4cc8ff : 0xff7755;
-    const outline = this.add.rectangle(x, y, TILE - 2, TILE - 2).setStrokeStyle(2, ringColor, 0.7);
+    // Hidden hit-zone under the sprite for click/right-click; not stroked
+    // so it never paints a visible ring. The DM original had no outline.
+    const outline = this.add.rectangle(x, y, TILE - 2, TILE - 2, 0x000000, 0);
     const cardinal = facingToCardinal(p.facing);
-    const frame = CHARACTER_SPRITES.male[cardinal];
-    const rect = this.add.sprite(x, y, ATLAS_KEY, frame);
-    // Doppelganger: hair + nameplate are picked from the disguise target.
-    const hairSeed = p.disguiseAsUserId ?? p.userId;
-    const hairId = this.pickHair(hairSeed);
-    const displayName = p.disguiseUsername ?? p.username;
+    const frame = CHARACTER_SPRITES[p.gender][cardinal];
+    const rect = this.add.sprite(x, y, ATLAS_KEY, frame).setDepth(2);
+    // Doppelganger: hair + nameplate are picked from the disguise target;
+    // otherwise use what the server picked at game start.
+    const hairId = p.disguiseHairId ?? p.hairId;
+    const displayName = p.disguiseDisplayName ?? p.displayName;
     const hairFr = hairFrame(hairId, cardinal);
     const atlasTex = this.textures.get(ATLAS_KEY);
     const hair = this.add
       .sprite(x, y, ATLAS_KEY, atlasTex.has(hairFr) ? hairFr : frame)
       .setDepth(rect.depth + 0.01);
+    // Atlas hair is grayscale; FILL mode paints the silhouette in the
+    // chosen color (default MULTIPLY would mute bright tints to mud).
+    hair.setTint(hairTintFor(p.hairColor)).setTintMode(TINT_FILL);
     const label = this.add
       .text(x, y - TILE / 2 - 4, displayName, {
         fontFamily: 'Arial',
@@ -1881,24 +2154,19 @@ export class GameWorld extends Scene {
       hpFill,
       state: p,
     };
-    if (p.userId === this.hostUserId && atlasTex.has('root/crown/_/S/0')) {
-      sprite.crown = this.add
-        .image(x, y - TILE / 2 - 4, ATLAS_KEY, 'root/crown/_/S/0')
-        .setDepth(rect.depth + 0.02);
-    }
     this.players.set(p.userId, sprite);
     this.updateHpBar(sprite);
     this.applyBloodyTint(sprite, p.bloody ?? 0);
     if (p.equippedItemId) {
       this.updateEquippedSprite(sprite, p.equippedItemId, p.equippedItemBloody);
     }
-    // Right-click to view profile (DM's `oview(7)` View_Profile verb).
+    // Right-click → context menu of in-range verbs (matches DM's
+    // right-click verb list). Replaces the old letter-key shortcuts.
     rect.setInteractive({ useHandCursor: true });
     rect.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (pointer.rightButtonDown() || pointer.event.shiftKey) {
-        if (p.userId !== this.match.userId) {
-          void this.match.sendMatch(OpCode.C2S_VIEW_PROFILE, { userId: p.userId });
-        }
+        const ev = pointer.event as MouseEvent;
+        this.openPlayerContextMenu(p, ev.clientX, ev.clientY);
       }
     });
   }
@@ -1909,7 +2177,7 @@ export class GameWorld extends Scene {
     sprite.tween?.stop();
     sprite.rect.destroy();
     sprite.hair.destroy();
-    sprite.hand?.destroy();
+    sprite.weapon?.destroy();
     sprite.crown?.destroy();
     sprite.outline.destroy();
     sprite.label.destroy();
@@ -1946,7 +2214,7 @@ export class GameWorld extends Scene {
           .rectangle(x, y, TILE - 4, TILE - 4, 0x551111, 0.85)
           .setStrokeStyle(2, 0x880000)
           .setDepth(1.5);
-    const tag = c.discovered ? `† ${c.victimRealName || c.victimUsername}` : '†';
+    const tag = c.discovered ? `† ${c.victimRealName || c.victimDisplayName}` : `† ${c.victimDisplayName}`;
     const label = this.add
       .text(x, y + TILE / 2 + 2, tag, {
         fontFamily: 'Arial',
@@ -2009,14 +2277,21 @@ export class GameWorld extends Scene {
     const targetY = y * TILE + TILE / 2;
     sprite.tween?.stop();
     const cardinal = facingToCardinal(facing);
-    sprite.rect.play(`male.walk.${cardinal}`, true);
+    const gender = sprite.state.gender;
+    sprite.rect.play(`${gender}.walk.${cardinal}`, true);
     if (this.anims.exists(`hair.${sprite.hairId}.walk.${cardinal}`)) {
       sprite.hair.play(`hair.${sprite.hairId}.walk.${cardinal}`, true);
     }
-    sprite.rect.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
-      sprite.rect.setFrame(CHARACTER_SPRITES.male[cardinal]);
+    sprite.rect.once('animationcomplete', () => {
+      sprite.rect.setFrame(CHARACTER_SPRITES[gender][cardinal]);
       sprite.hair.setFrame(hairFrame(sprite.hairId, cardinal));
     });
+    // Wielded-weapon underlay rotates with facing; refresh its frame here
+    // so it matches the new direction even when the equipped item didn't change.
+    if (sprite.weapon && sprite.equippedItemId) {
+      const wf = wieldedItemFrame(sprite.equippedItemId, cardinal);
+      if (wf && this.textures.get(ATLAS_KEY).has(wf)) sprite.weapon.setFrame(wf);
+    }
     const targets: Phaser.GameObjects.GameObject[] = [
       sprite.rect,
       sprite.hair,
@@ -2025,29 +2300,26 @@ export class GameWorld extends Scene {
       sprite.hpBg,
       sprite.hpFill,
     ];
+    if (sprite.weapon) targets.push(sprite.weapon);
     if (sprite.crown) targets.push(sprite.crown);
-    if (sprite.hand) targets.push(sprite.hand);
     sprite.tween = this.tweens.add({
       targets,
       x: (t: Phaser.GameObjects.GameObject) => {
         if (t === sprite.hpFill) return targetX - (TILE - 4) / 2;
-        if (t === sprite.hand) return targetX + TILE / 2 - 2;
         return targetX;
       },
       y: (t: Phaser.GameObjects.GameObject) => {
         if (t === sprite.label) return targetY - TILE / 2 - 4;
         if (t === sprite.hpBg || t === sprite.hpFill) return targetY - TILE / 2 - 18;
         if (t === sprite.crown) return targetY - TILE / 2 - 4;
-        if (t === sprite.hand) return targetY + 2;
         return targetY;
       },
       duration: MOVE_TWEEN_MS,
-      ease: 'Sine.easeInOut',
+      // Linear keeps the speed constant across consecutive tile-steps when
+      // the player holds an arrow; ease-in/out per-tween reads as pulsing.
+      ease: 'Linear',
     });
     sprite.state = { ...sprite.state, x, y, facing };
-    if (sprite.userId === this.match.userId && this.statusText) {
-      this.statusText.setText(this.statusLine());
-    }
   }
 
   private reseedPlayers(roster: PublicPlayerInGame[]): void {
@@ -2097,7 +2369,42 @@ export class GameWorld extends Scene {
         .image(d.x * TILE + TILE / 2, d.y * TILE + TILE / 2, ATLAS_KEY, frame)
         .setDepth(0.5);
       this.doorSprites.set(`${d.x},${d.y}`, { sprite, kind: d.kind });
+      // Right-click → door context menu (Open/Close + Escape if applicable).
+      sprite.setInteractive({ useHandCursor: true });
+      sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (!pointer.rightButtonDown() && !pointer.event.shiftKey) return;
+        const ev = pointer.event as MouseEvent;
+        this.openDoorContextMenu(d.x, d.y, d.kind, ev.clientX, ev.clientY);
+      });
     }
+  }
+
+  /** Door right-click menu: Open/Close (server toggles) + Escape if it's the steel door. */
+  private openDoorContextMenu(
+    x: number,
+    y: number,
+    kind: string,
+    sx: number,
+    sy: number,
+  ): void {
+    const me = this.players.get(this.match.userId)?.state;
+    const dist = me ? Math.max(Math.abs(me.x - x), Math.abs(me.y - y)) : 99;
+    const verbs: Array<{ label: string; run: () => void }> = [];
+    if (dist <= 1) {
+      verbs.push({
+        label: 'Open / Close',
+        run: () => void this.match.sendMatch(OpCode.C2S_DOOR_TOGGLE, { x, y }),
+      });
+      if (kind === '/obj/Escape_Door') {
+        verbs.push({
+          label: 'Escape (needs Key Card)',
+          run: () => void this.match.sendMatch(OpCode.C2S_ESCAPE_DOOR, {}),
+        });
+      }
+    } else {
+      verbs.push({ label: '(walk closer)', run: () => {} });
+    }
+    this.renderContextMenu('Door', verbs, sx, sy);
   }
 
   private applyDoorState(x: number, y: number, open: boolean): void {
@@ -2122,13 +2429,19 @@ export class GameWorld extends Scene {
               .rectangle(cx, cy, TILE - 8, TILE - 8, 0x886633, 0.55)
               .setStrokeStyle(1, 0xccaa66, 0.7)
               .setDepth(1);
-      // Synthesise a stable id from coords. Server uses a randomised id;
-      // the client identifies containers by coord here and the server
-      // resolves the actual containerId on the look response. Until we
-      // broadcast the manifest from the server, the smoke hits Look via
-      // the closest container by coord (server validates proximity).
+      // Server identifies containers by random id; client keys by coord
+      // and the server resolves to the real id on each request.
       const id = `c@${c.x},${c.y}`;
       this.containerHotspots.push({ id, x: c.x, y: c.y, rect });
+      const stationed = c.kind.includes('Containers_Stationed');
+      rect.setInteractive({ useHandCursor: true });
+      rect.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        if (!pointer.rightButtonDown() && !pointer.event.shiftKey) return;
+        const ev = pointer.event as MouseEvent;
+        const hot = this.containerHotspots.find((h) => h.rect === rect);
+        if (!hot) return;
+        this.openContainerContextMenu(hot.x, hot.y, stationed, ev.clientX, ev.clientY);
+      });
     }
   }
 
@@ -2179,6 +2492,42 @@ export class GameWorld extends Scene {
     }
     if (this.textures.exists('pyrce-map')) this.textures.remove('pyrce-map');
     this.textures.addCanvas('pyrce-map', canvas);
+  }
+}
+
+/**
+ * Map a hair color word from the demographic roll to the tint applied to
+ * the (grayscale) hair sprite. DM stored the colour as `mob.color = rgb()`
+ * and applied it on every frame; here we do it once at spawn.
+ */
+function hairTintFor(color: string): number {
+  switch (color) {
+    case 'black':    return 0x222222;
+    case 'white':    return 0xf2efe6;
+    case 'silver':   return 0xc0c8d0;
+    case 'gray':     return 0x888888;
+    case 'blonde':   return 0xeed98a;
+    case 'yellow':   return 0xf7e93a;
+    case 'amber':    return 0xd99c2a;
+    case 'orange':   return 0xe07a1f;
+    case 'red':      return 0xcc2e2e;
+    case 'crimson':  return 0x8a1c2e;
+    case 'pink':     return 0xff8fc0;
+    case 'magenta':  return 0xc024a0;
+    case 'brown':    return 0x7a4a26;
+    // Auburn/reddish-brown — sits clearly between brown and red, no longer
+    // dark enough to read as black.
+    case 'chestnut': return 0xb05a2a;
+    case 'green':    return 0x4caf50;
+    case 'lime':     return 0xb6ed3a;
+    case 'mint':     return 0x6fe0a8;
+    case 'teal':     return 0x2a8e8e;
+    case 'cyan':     return 0x2bd9d9;
+    case 'blue':     return 0x4477cc;
+    case 'navy':     return 0x1f2a72;
+    case 'purple':   return 0x9b4ee0;
+    case 'lavender': return 0xb59cd1;
+    default:         return 0xffffff;
   }
 }
 

@@ -1,4 +1,4 @@
-import { ATLAS_KEY, ITEM_SPRITES, ITEMS, type ItemDef } from '@pyrce/shared';
+import { ATLAS_KEY, ITEM_SPRITES, ITEMS } from '@pyrce/shared';
 import { Scene } from 'phaser';
 import type { ClientGameInfo } from '../../state/game';
 import type { ClientInventory } from '../../state/inventory';
@@ -7,9 +7,6 @@ interface HudData {
   inventory: () => ClientInventory;
   game: () => ClientGameInfo;
 }
-
-const SLOT = 36; // hotkey slot tile size
-const SLOT_GAP = 6;
 
 interface HotkeySlot {
   bg: Phaser.GameObjects.Rectangle;
@@ -20,29 +17,21 @@ interface HotkeySlot {
 }
 
 /**
- * Persistent HUD overlay rendered on top of `GameWorld`. Reads the
- * player's local inventory mirror via the function passed in at launch
- * time and re-renders on demand (cheap; tiny string operations).
- *
- * Layout (mirrors the original BYOND skin):
- *   bottom-center: 5-slot hotkey bar with item icons + slot numbers
- *   bottom-right: weight + full inventory list (text fallback)
- *   top-left:     HP bar + stamina bar + heart icon
- *   top-center:   role banner + clock
+ * Minimal HUD overlay. Mirrors the original BYOND `ingame.dmf` skin: a
+ * single bottom strip with five item slots, plus a compact top-left
+ * vitals/role pill. Status messages flow into the chat overlay rather
+ * than floating banners — same approach the original game took.
  */
 export class Hud extends Scene {
   private getInventory!: () => ClientInventory;
   private getGame!: () => ClientGameInfo;
-  private invText!: Phaser.GameObjects.Text;
-  private roleText!: Phaser.GameObjects.Text;
-  private clockText!: Phaser.GameObjects.Text;
-  private notif!: Phaser.GameObjects.Text;
-  private notifTimer?: Phaser.Time.TimerEvent;
   private hotkeySlots: HotkeySlot[] = [];
   private hpFill!: Phaser.GameObjects.Rectangle;
   private hpText!: Phaser.GameObjects.Text;
-  private staFill!: Phaser.GameObjects.Rectangle;
-  private statusText!: Phaser.GameObjects.Text;
+  private vitalsText!: Phaser.GameObjects.Text;
+  /** Last rendered signature; skip the redraw when nothing changed. */
+  private lastVitalsSig = '';
+  private lastInvSig = '';
 
   constructor() {
     super('Hud');
@@ -55,88 +44,57 @@ export class Hud extends Scene {
 
   create(): void {
     const { width, height } = this.scale.gameSize;
-
     this.buildVitals();
-    this.buildRoleBanner(width);
     this.buildHotkeyBar(width, height);
-    this.buildInventoryPanel(width);
-    this.buildHotkeyHint(width, height);
-
-    this.notif = this.add
-      .text(width / 2, 80, '', {
-        fontFamily: 'Arial',
-        fontSize: 14,
-        color: '#ffffaa',
-        backgroundColor: '#000000aa',
-        padding: { left: 8, right: 8, top: 4, bottom: 4 },
-      })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setDepth(1001)
-      .setVisible(false);
-
-    this.statusText = this.add
-      .text(width / 2, 60, '', {
-        fontFamily: 'Arial Black',
-        fontSize: 12,
-        color: '#ff8866',
-        backgroundColor: '#000000aa',
-        padding: { left: 8, right: 8, top: 2, bottom: 2 },
-      })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setDepth(1001)
-      .setVisible(false);
 
     this.events.on('inv:refresh', () => this.renderInventory());
     this.events.on('inv:notify', (msg: string) => this.flash(msg));
-    this.events.on('game:refresh', () => this.renderGame());
+    this.events.on('game:refresh', () => this.renderVitals());
     this.events.on('hud:vitals', () => this.renderVitals());
     this.events.on(
       'hud:status',
       (s: { ko: boolean; bleeding: boolean; frozen: boolean; infected: boolean }) =>
-        this.renderStatus(s),
+        this.renderStatusToChat(s),
     );
 
     this.renderInventory();
-    this.renderGame();
     this.renderVitals();
+
+    // Defensive re-render: covers the race where ROLE_ASSIGNED / INV_FULL
+    // arrive before our create() finished wiring listeners. Cheap because
+    // both renderers early-return when their state signature is unchanged.
+    this.time.addEvent({
+      delay: 500,
+      loop: true,
+      callback: () => {
+        this.renderVitals();
+        this.renderInventory();
+      },
+    });
   }
 
-  // ---------- layout builders ----------
+  // ---------- layout ----------
 
-  /** Top-left HP + stamina bars, with a heart icon next to the HP bar. */
   private buildVitals(): void {
-    const x0 = 12;
-    const y0 = 12;
-    const barWidth = 140;
-    const barHeight = 12;
-
-    if (
-      this.textures.exists(ATLAS_KEY) &&
-      this.textures.get(ATLAS_KEY).has('root/healthhud/_/S/0')
-    ) {
-      this.add
-        .image(x0 + 8, y0 + barHeight / 2, ATLAS_KEY, 'root/healthhud/_/S/0')
-        .setOrigin(0.5, 0.5)
-        .setScrollFactor(0)
-        .setDepth(1000);
-    }
+    const x = 12;
+    const y = 12;
+    const barW = 140;
+    const barH = 10;
     this.add
-      .rectangle(x0 + 22, y0, barWidth, barHeight, 0x330000)
+      .rectangle(x, y, barW, barH, 0x330000)
       .setOrigin(0, 0)
       .setStrokeStyle(1, 0x000000)
       .setScrollFactor(0)
       .setDepth(1000);
     this.hpFill = this.add
-      .rectangle(x0 + 22, y0, barWidth, barHeight, 0xcc3333)
+      .rectangle(x, y, barW, barH, 0xcc3333)
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(1000);
     this.hpText = this.add
-      .text(x0 + 22 + barWidth / 2, y0 + barHeight / 2, '', {
+      .text(x + barW / 2, y + barH / 2, '', {
         fontFamily: 'Courier New',
-        fontSize: 11,
+        fontSize: 10,
         color: '#ffffff',
         stroke: '#000000',
         strokeThickness: 3,
@@ -144,96 +102,67 @@ export class Hud extends Scene {
       .setOrigin(0.5, 0.5)
       .setScrollFactor(0)
       .setDepth(1001);
-
-    const yStam = y0 + barHeight + 4;
-    this.add
-      .text(x0, yStam, 'STA', {
-        fontFamily: 'Courier New',
-        fontSize: 10,
-        color: '#88ccff',
+    this.vitalsText = this.add
+      .text(x, y + barH + 4, '', {
+        fontFamily: 'Arial Black',
+        fontSize: 13,
+        color: '#ffe066',
+        backgroundColor: '#000000aa',
+        padding: { left: 6, right: 6, top: 2, bottom: 2 },
         stroke: '#000000',
         strokeThickness: 3,
       })
       .setOrigin(0, 0)
       .setScrollFactor(0)
-      .setDepth(1000);
-    this.add
-      .rectangle(x0 + 22, yStam, barWidth, 8, 0x002233)
-      .setOrigin(0, 0)
-      .setStrokeStyle(1, 0x000000)
-      .setScrollFactor(0)
-      .setDepth(1000);
-    this.staFill = this.add
-      .rectangle(x0 + 22, yStam, barWidth, 8, 0x3399ff)
-      .setOrigin(0, 0)
-      .setScrollFactor(0)
-      .setDepth(1000);
+      .setDepth(1001);
   }
 
-  private buildRoleBanner(width: number): void {
-    this.roleText = this.add
-      .text(width / 2, 12, '', {
-        fontFamily: 'Arial Black',
-        fontSize: 14,
-        color: '#ffd866',
-        backgroundColor: '#000000aa',
-        padding: { left: 8, right: 8, top: 4, bottom: 4 },
-      })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setDepth(1000);
-
-    this.clockText = this.add
-      .text(width / 2, 38, '', {
-        fontFamily: 'Courier New',
-        fontSize: 14,
-        color: '#aaaaaa',
-        backgroundColor: '#000000aa',
-        padding: { left: 8, right: 8, top: 2, bottom: 2 },
-      })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setDepth(1000);
-  }
-
-  /** Bottom-center 5-slot icon bar. Slots are reused; only contents update. */
+  /**
+   * Bottom strip: 5 slot buttons across the full width, mirroring the
+   * `ingame` window in Skinned.dmf (size 384x46 — five 64x46 buttons).
+   * Slot N is hotkey N.
+   */
   private buildHotkeyBar(width: number, height: number): void {
-    const totalWidth = SLOT * 5 + SLOT_GAP * 4;
-    const startX = (width - totalWidth) / 2;
-    const y = height - SLOT - 36;
+    const slotH = 46;
+    const slotW = Math.floor(width / 5);
+    const y = height - slotH;
+    // Initialize each icon with a known-good frame so Phaser's texture
+    // pipeline doesn't NPE later when we setFrame() to a real item icon.
+    const initialFrame = this.textures.get(ATLAS_KEY).getFrameNames()[0] ?? '__BASE';
     for (let i = 0; i < 5; i++) {
-      const x = startX + i * (SLOT + SLOT_GAP);
+      const x = i * slotW;
       const bg = this.add
-        .rectangle(x, y, SLOT, SLOT, 0x000000, 0.55)
+        .rectangle(x, y, slotW, slotH, 0x000000, 0.7)
         .setOrigin(0, 0)
         .setScrollFactor(0)
-        .setDepth(1000);
+        .setDepth(1000)
+        .setInteractive({ useHandCursor: true });
       const border = this.add
-        .rectangle(x, y, SLOT, SLOT)
+        .rectangle(x, y, slotW, slotH)
         .setOrigin(0, 0)
-        .setStrokeStyle(2, 0x666666)
+        .setStrokeStyle(1, 0x445566)
         .setScrollFactor(0)
         .setDepth(1001);
       const icon = this.add
-        .image(x + SLOT / 2, y + SLOT / 2, ATLAS_KEY)
+        .image(x + slotW / 2, y + slotH / 2 + 4, ATLAS_KEY, initialFrame)
         .setOrigin(0.5, 0.5)
         .setScrollFactor(0)
         .setDepth(1001)
         .setVisible(false);
       const numLabel = this.add
-        .text(x + 3, y + 1, String(i + 1), {
+        .text(x + 6, y + 4, String(i + 1), {
           fontFamily: 'Arial Black',
-          fontSize: 11,
-          color: '#ffffff',
+          fontSize: 12,
+          color: '#aaccff',
           stroke: '#000000',
           strokeThickness: 3,
         })
         .setScrollFactor(0)
         .setDepth(1002);
       const count = this.add
-        .text(x + SLOT - 3, y + SLOT - 3, '', {
+        .text(x + slotW - 6, y + slotH - 6, '', {
           fontFamily: 'Arial Black',
-          fontSize: 10,
+          fontSize: 11,
           color: '#ffe066',
           stroke: '#000000',
           strokeThickness: 3,
@@ -241,74 +170,64 @@ export class Hud extends Scene {
         .setOrigin(1, 1)
         .setScrollFactor(0)
         .setDepth(1002);
+      bg.on('pointerdown', () => this.scene.get('GameWorld').events.emit('hud:hotkey', i + 1));
       this.hotkeySlots.push({ bg, border, icon, count, numLabel });
     }
   }
 
-  /** Compact text-mode inventory + weight. Bottom-right corner. */
-  private buildInventoryPanel(width: number): void {
-    this.invText = this.add
-      .text(width - 12, 12, '', {
-        fontFamily: 'Courier New',
-        fontSize: 12,
-        color: '#dddddd',
-        backgroundColor: '#000000aa',
-        padding: { left: 6, right: 6, top: 4, bottom: 4 },
-      })
-      .setOrigin(1, 0)
-      .setScrollFactor(0)
-      .setDepth(1000);
-  }
-
-  private buildHotkeyHint(width: number, height: number): void {
-    this.add
-      .text(
-        width / 2,
-        height - 12,
-        'E · F atk · 1-5 hotkey · G drop · C craft · T chat · V vote · K kick · B copy · R drain · Q skill · P pull · / chat-cmds',
-        {
-          fontFamily: 'Arial',
-          fontSize: 11,
-          color: '#888888',
-          backgroundColor: '#000000aa',
-          padding: { left: 8, right: 8, top: 3, bottom: 3 },
-        },
-      )
-      .setOrigin(0.5, 1)
-      .setScrollFactor(0)
-      .setDepth(1000);
-  }
-
   // ---------- renderers ----------
 
-  private renderGame(): void {
-    const g = this.getGame();
-    this.roleText.setText(g.role ? `You are: ${g.role.roleName}` : '');
-    this.clockText.setText(
-      g.clock
-        ? `${String(g.clock.gameHour).padStart(2, '0')}:00 ${g.clock.ampm}  · ${g.clock.hoursLeft.toFixed(1)}h to dawn`
-        : '',
-    );
-  }
-
   private renderVitals(): void {
+    if (!this.hpFill || !this.hpFill.scene) return;
     const g = this.getGame();
+    const sig = `${g.hp}/${g.maxHp}|${g.role?.roleName ?? ''}|${g.clock?.gameHour ?? ''}${g.clock?.ampm ?? ''}`;
+    if (sig === this.lastVitalsSig) return;
+    this.lastVitalsSig = sig;
     const hpRatio = g.maxHp > 0 ? Math.max(0, Math.min(1, g.hp / g.maxHp)) : 0;
-    this.hpFill.setSize(140 * hpRatio, 12);
+    this.hpFill.setSize(140 * hpRatio, 10);
     const hpColor = hpRatio > 0.66 ? 0x55ff55 : hpRatio > 0.33 ? 0xffcc44 : 0xff5555;
     this.hpFill.setFillStyle(hpColor);
     this.hpText.setText(`${g.hp} / ${g.maxHp}`);
-    const staRatio = g.maxStamina > 0 ? Math.max(0, Math.min(1, g.stamina / g.maxStamina)) : 0;
-    this.staFill.setSize(140 * staRatio, 8);
+    const parts: string[] = [];
+    if (g.role) parts.push(g.role.roleName);
+    if (g.clock) {
+      parts.push(`${String(g.clock.gameHour).padStart(2, '0')}:00 ${g.clock.ampm}`);
+    }
+    if (parts.length === 0) parts.push('(no role yet)');
+    this.vitalsText.setText(parts.join(' · '));
   }
 
+  private renderInventory(): void {
+    const inv = this.getInventory();
+    const sig = `${inv.equipped ?? ''}|${inv.hotkeys.join(',')}|${inv.items.map((i) => `${i.instanceId}:${i.itemId}:${i.count}`).join('|')}`;
+    if (sig === this.lastInvSig) return;
+    this.lastInvSig = sig;
+    const atlas = this.textures.get(ATLAS_KEY);
+    for (let i = 0; i < 5; i++) {
+      const slot = this.hotkeySlots[i];
+      if (!slot || !slot.bg.scene) continue;
+      const ref = inv.hotkeys[i];
+      const it = ref ? inv.items.find((x) => x.instanceId === ref) : null;
+      const def = it ? ITEMS[it.itemId] : null;
+      const isEquipped = it ? it.instanceId === inv.equipped : false;
+      slot.border.setStrokeStyle(isEquipped ? 2 : 1, isEquipped ? 0xffe066 : 0x445566);
+      const frame = it ? ITEM_SPRITES[it.itemId] : undefined;
+      if (frame && atlas.has(frame)) {
+        slot.icon.setFrame(frame).setVisible(true).setAlpha(1).setScale(1);
+      } else {
+        slot.icon.setVisible(false);
+      }
+      slot.count.setText(it && it.count > 1 ? `×${it.count}` : '');
+      slot.numLabel.setText(def ? `${i + 1}·${def.name.slice(0, 8)}` : String(i + 1));
+    }
+  }
+
+  /** Route quick info into the chat overlay so the screen stays clean. */
   private flash(msg: string): void {
-    this.notif.setText(msg).setVisible(true);
-    this.notifTimer?.remove();
-    this.notifTimer = this.time.delayedCall(2200, () => this.notif.setVisible(false));
+    this.scene.get('ChatOverlay').events.emit('chat:system', msg);
   }
 
-  private renderStatus(s: {
+  private renderStatusToChat(s: {
     ko: boolean;
     bleeding: boolean;
     frozen: boolean;
@@ -316,56 +235,10 @@ export class Hud extends Scene {
   }): void {
     const tags: string[] = [];
     if (s.ko) tags.push('KO');
-    if (s.frozen) tags.push('FROZEN');
-    if (s.bleeding) tags.push('BLEEDING');
-    if (s.infected) tags.push('INFECTED');
-    if (tags.length === 0) {
-      this.statusText.setVisible(false);
-      return;
-    }
-    this.statusText.setText(tags.join(' · ')).setVisible(true);
-  }
-
-  private renderInventory(): void {
-    const inv = this.getInventory();
-    const atlas = this.textures.get(ATLAS_KEY);
-
-    // Hotkey bar slots.
-    for (let i = 0; i < 5; i++) {
-      const slot = this.hotkeySlots[i];
-      if (!slot) continue;
-      const ref = inv.hotkeys[i];
-      const it = ref ? inv.items.find((x) => x.instanceId === ref) : null;
-      const def = it ? ITEMS[it.itemId] : null;
-      const isEquipped = it ? it.instanceId === inv.equipped : false;
-      slot.border.setStrokeStyle(2, isEquipped ? 0xffe066 : 0x666666);
-      const frame = it ? ITEM_SPRITES[it.itemId] : undefined;
-      if (frame && atlas.has(frame)) {
-        slot.icon.setFrame(frame).setVisible(true);
-      } else {
-        slot.icon.setVisible(false);
-      }
-      slot.count.setText(it && it.count > 1 ? `×${it.count}` : '');
-      // Tooltip-ish: append item name to the slot number when populated.
-      slot.numLabel.setText(def ? `${i + 1} ${def.name.slice(0, 8)}` : String(i + 1));
-    }
-
-    // Compact text inventory (right side).
-    const lines: string[] = [`weight ${inv.weight.toFixed(1)} / ${inv.weightCap}`];
-    const equippedItem = inv.equipped ? inv.items.find((i) => i.instanceId === inv.equipped) : null;
-    const equippedDef = equippedItem ? ITEMS[equippedItem.itemId] : null;
-    lines.push(`equipped: ${equippedDef?.name ?? '(fists)'}`);
-    if (inv.items.length === 0) {
-      lines.push('(empty pack)');
-    } else {
-      lines.push('— inventory —');
-      for (const it of inv.items) {
-        const def: ItemDef | undefined = ITEMS[it.itemId];
-        const stack = it.count > 1 ? ` ×${it.count}` : '';
-        const equippedTag = it.instanceId === inv.equipped ? ' [E]' : '';
-        lines.push(`${def?.name ?? it.itemId}${stack}${equippedTag}`);
-      }
-    }
-    this.invText.setText(lines.join('\n'));
+    if (s.frozen) tags.push('frozen');
+    if (s.bleeding) tags.push('bleeding');
+    if (s.infected) tags.push('infected');
+    if (tags.length === 0) return;
+    this.scene.get('ChatOverlay').events.emit('chat:system', `status: ${tags.join(', ')}`);
   }
 }

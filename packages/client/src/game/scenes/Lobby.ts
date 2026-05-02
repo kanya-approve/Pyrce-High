@@ -3,6 +3,7 @@ import {
   MatchPhase,
   MODES,
   OpCode,
+  type S2CLobbyState,
   type S2CPhaseChange,
   type S2CVoteModeTally,
   selectableModes,
@@ -28,8 +29,11 @@ export class Lobby extends Scene {
   private matchId!: string;
   private hostUserId: string | null = null;
   private presences = new Map<string, Presence>();
+  /** Server-rolled display names ("Male with brown hair") keyed by userId. */
+  private displayNames = new Map<string, string>();
   private playerListText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
+  private startButton: Phaser.GameObjects.GameObject[] = [];
   private modeButtons = new Map<
     string,
     { bg: Phaser.GameObjects.Rectangle; txt: Phaser.GameObjects.Text }
@@ -95,9 +99,9 @@ export class Lobby extends Scene {
       .setOrigin(0.5);
 
     this.makeButton(width / 2 - 240, height - 90, 200, 40, '← Leave', () => this.handleLeave());
-    if (this.amHost()) {
-      this.makeButton(width / 2 + 40, height - 90, 200, 40, 'Start Game', () => this.handleStart());
-    }
+    // Start button is rendered/removed dynamically as host status changes
+    // (e.g. after auto-return-to-lobby or host migration). See refreshHostButton().
+    this.refreshHostButton();
 
     this.offPresence = this.match.onPresenceChange((ev) => {
       for (const p of ev.joins ?? []) this.presences.set(p.user_id, p);
@@ -115,6 +119,17 @@ export class Lobby extends Scene {
             gameModeId: payload.gameModeId ?? null,
             hostUserId: this.hostUserId,
           });
+        }
+      } else if (msg.op_code === OpCode.S2C_LOBBY_STATE) {
+        const lobby = parsePayload<S2CLobbyState>(msg.data);
+        if (lobby) {
+          this.displayNames.clear();
+          for (const e of lobby.entries) {
+            this.displayNames.set(e.userId, e.displayName);
+            if (e.isHost) this.hostUserId = e.userId;
+          }
+          this.renderPlayers();
+          this.refreshHostButton();
         }
       } else if (msg.op_code === OpCode.S2C_VOTE_MODE_TALLY) {
         const t = parsePayload<S2CVoteModeTally>(msg.data);
@@ -144,6 +159,12 @@ export class Lobby extends Scene {
   }
 
   private renderPlayers(): void {
+    // Async match-data callbacks can fire after a scene transition has
+    // already destroyed our text object — Phaser will then NPE deep
+    // inside Frame.updateUVs when we try to setText. Guard against it.
+    if (!this.playerListText || !this.playerListText.scene || !this.playerListText.active) {
+      return;
+    }
     if (this.presences.size === 0) {
       this.playerListText.setText('(no players yet)');
       return;
@@ -153,7 +174,8 @@ export class Lobby extends Scene {
     for (const p of this.presences.values()) {
       const tag = p.user_id === this.match.userId ? ' (you)' : '';
       const host = p.user_id === this.hostUserId ? ' [host]' : '';
-      lines.push(`${String(i).padStart(2, ' ')}.  ${p.username}${tag}${host}`);
+      const label = this.displayNames.get(p.user_id) ?? '...';
+      lines.push(`${String(i).padStart(2, ' ')}.  ${label}${tag}${host}`);
       i++;
     }
     this.playerListText.setText(lines.join('\n'));
@@ -247,7 +269,7 @@ export class Lobby extends Scene {
     h: number,
     label: string,
     onClick: () => void,
-  ): void {
+  ): Phaser.GameObjects.GameObject[] {
     const bg = this.add.rectangle(x, y, w, h, 0x223344).setOrigin(0, 0).setStrokeStyle(1, 0x88aaff);
     const txt = this.add
       .text(x + w / 2, y + h / 2, label, {
@@ -262,6 +284,32 @@ export class Lobby extends Scene {
     bg.on('pointerdown', onClick);
     txt.setInteractive({ useHandCursor: true });
     txt.on('pointerdown', onClick);
+    return [bg, txt];
+  }
+
+  /**
+   * Add or remove the host's "Start Game" button based on current host
+   * status. Called from create() and again on every S2C_LOBBY_STATE so
+   * host migration / fresh-round-after-end-of-round paths render the
+   * button correctly.
+   */
+  private refreshHostButton(): void {
+    const shouldShow = this.amHost();
+    const isShowing = this.startButton.length > 0;
+    if (shouldShow && !isShowing) {
+      const { width, height } = this.scale.gameSize;
+      this.startButton = this.makeButton(
+        width / 2 + 40,
+        height - 90,
+        200,
+        40,
+        'Start Game',
+        () => this.handleStart(),
+      );
+    } else if (!shouldShow && isShowing) {
+      for (const o of this.startButton) o.destroy();
+      this.startButton = [];
+    }
   }
 }
 

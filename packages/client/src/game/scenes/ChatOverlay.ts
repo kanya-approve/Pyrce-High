@@ -7,7 +7,7 @@ const BUBBLE_DURATION_MS = 3500;
 
 interface ChatLine {
   channel: ChatChannel;
-  fromUsername: string;
+  fromDisplayName: string;
   body: string;
 }
 
@@ -63,8 +63,16 @@ export class ChatOverlay extends Scene {
     this.match = this.game.registry.get('match') as NakamaMatchClient;
     const { height } = this.scale.gameSize;
 
+    // HUD's hotkey strip eats the bottom 46px. Park chat above it with a
+    // small gap so they never overlap visually.
+    const HOTKEY_STRIP_PX = 46;
+    const inputBottom = HOTKEY_STRIP_PX + 6; // chat input sits just above the slots
+    const inputHeight = 28; // approximate <input> height
+    const hintBottom = inputBottom + inputHeight + 2;
+    const historyBaseline = hintBottom + 14; // bottom of history baseline
+
     this.historyText = this.add
-      .text(12, height - 168, '', {
+      .text(12, height - historyBaseline, '', {
         fontFamily: 'Courier New',
         fontSize: 13,
         color: '#dddddd',
@@ -77,7 +85,7 @@ export class ChatOverlay extends Scene {
       .setDepth(1500);
 
     this.add
-      .text(12, height - 14, 'press T or Enter to chat · /shout /whisper /ooc /emote /dead', {
+      .text(12, height - hintBottom, 'press T or Enter to chat · /shout /whisper /ooc /emote /dead', {
         fontFamily: 'Arial',
         fontSize: 11,
         color: '#888888',
@@ -88,7 +96,17 @@ export class ChatOverlay extends Scene {
       .setScrollFactor(0)
       .setDepth(1500);
 
-    this.buildInputElement();
+    this.buildInputElement(inputBottom);
+
+    // System notifications (HP/inv/status messages) flow into the chat
+    // feed instead of cluttering the screen with floating banners.
+    this.events.on('chat:system', (msg: string) => {
+      this.history.push({ channel: ChatChannel.OOC, fromDisplayName: '*', body: msg });
+      if (this.history.length > HISTORY_LIMIT) {
+        this.history.splice(0, this.history.length - HISTORY_LIMIT);
+      }
+      this.renderHistory();
+    });
 
     if (this.input.keyboard) {
       this.input.keyboard.on('keydown-T', (ev: KeyboardEvent) => {
@@ -128,13 +146,13 @@ export class ChatOverlay extends Scene {
 
   // ---------- input handling ----------
 
-  private buildInputElement(): void {
+  private buildInputElement(bottomPx: number): void {
     const parent = this.game.canvas.parentElement;
     if (!parent) return;
     const container = document.createElement('div');
     container.style.position = 'absolute';
     container.style.left = '12px';
-    container.style.bottom = '34px';
+    container.style.bottom = `${bottomPx}px`;
     container.style.width = '440px';
     container.style.display = 'none';
     container.style.zIndex = '2000';
@@ -243,7 +261,7 @@ export class ChatOverlay extends Scene {
   // ---------- inbound rendering ----------
 
   private handleChatMessage(m: S2CChatMessage): void {
-    this.history.push({ channel: m.channel, fromUsername: m.fromUsername, body: m.body });
+    this.history.push({ channel: m.channel, fromDisplayName: m.fromDisplayName, body: m.body });
     if (this.history.length > HISTORY_LIMIT) {
       this.history.splice(0, this.history.length - HISTORY_LIMIT);
     }
@@ -267,21 +285,21 @@ export class ChatOverlay extends Scene {
 function formatLine(line: ChatLine): string {
   switch (line.channel) {
     case ChatChannel.Emote:
-      return `* ${line.fromUsername} ${line.body}`;
+      return `* ${line.fromDisplayName} ${line.body}`;
     case ChatChannel.Shout:
-      return `${line.fromUsername} SHOUTS: ${line.body}`;
+      return `${line.fromDisplayName} SHOUTS: ${line.body}`;
     case ChatChannel.Whisper:
-      return `${line.fromUsername} (whispering): ${line.body}`;
+      return `${line.fromDisplayName} (whispering): ${line.body}`;
     case ChatChannel.OOC:
-      return `[OOC] ${line.fromUsername}: ${line.body}`;
+      return `[OOC] ${line.fromDisplayName}: ${line.body}`;
     case ChatChannel.Dead:
-      return `[dead] ${line.fromUsername}: ${line.body}`;
+      return `[dead] ${line.fromDisplayName}: ${line.body}`;
     case ChatChannel.Ghost:
-      return `[ghost] ${line.fromUsername}: ${line.body}`;
+      return `[ghost] ${line.fromDisplayName}: ${line.body}`;
     case ChatChannel.Shinigami:
-      return `[shini] ${line.fromUsername}: ${line.body}`;
+      return `[shini] ${line.fromDisplayName}: ${line.body}`;
     default:
-      return `${line.fromUsername}: ${line.body}`;
+      return `${line.fromDisplayName}: ${line.body}`;
   }
 }
 

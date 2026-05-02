@@ -78,6 +78,7 @@ export class NakamaMatchClient {
   async leaveMatch(matchId: string): Promise<void> {
     await this.socket.leaveMatch(matchId);
     if (this.currentMatchId === matchId) this.currentMatchId = null;
+    this.resetReplayBuffer();
   }
 
   /** Send a typed match-data message to the current match. */
@@ -91,6 +92,22 @@ export class NakamaMatchClient {
   private presenceListeners = new Set<(ev: MatchPresenceEvent) => void>();
   private socketListenersWired = false;
 
+  /**
+   * Last-seen message per opcode for the handful of opcodes that carry
+   * load-bearing state. New subscribers are replayed these so messages
+   * that arrived during a scene transition (e.g. PHASE_CHANGE → GameWorld
+   * scene boot vs. ROLE_ASSIGNED arriving in the same tick) aren't lost.
+   */
+  private latestByOpCode = new Map<number, MatchData>();
+  private static readonly REPLAY_OPCODES: ReadonlySet<number> = new Set([
+    2002, // S2C_PHASE_CHANGE
+    2300, // S2C_INITIAL_SNAPSHOT
+    2319, // S2C_PLAYER_ROLE_ASSIGNED
+    2400, // S2C_INV_FULL
+    2700, // S2C_CLOCK_TICK
+    2100, // S2C_LOBBY_STATE
+  ]);
+
   /** Register a listener; returns an unsubscribe function. */
   onPresenceChange(cb: (ev: MatchPresenceEvent) => void): () => void {
     this.wireSocketListeners();
@@ -100,11 +117,14 @@ export class NakamaMatchClient {
 
   /**
    * Subscribe to incoming match data. Multiple scenes may subscribe — each
-   * gets every message. Returns an unsubscribe function.
+   * gets every message. On subscribe we replay the latest state-bearing
+   * messages so listeners that registered after the message arrived still
+   * see it (the typical scene-transition race).
    */
   onMatchData(cb: (data: MatchData) => void): () => void {
     this.wireSocketListeners();
     this.matchDataListeners.add(cb);
+    for (const m of this.latestByOpCode.values()) cb(m);
     return () => this.matchDataListeners.delete(cb);
   }
 
@@ -112,11 +132,19 @@ export class NakamaMatchClient {
     if (this.socketListenersWired) return;
     this.socketListenersWired = true;
     this.socket.onmatchdata = (data) => {
+      if (NakamaMatchClient.REPLAY_OPCODES.has(data.op_code)) {
+        this.latestByOpCode.set(data.op_code, data);
+      }
       for (const cb of this.matchDataListeners) cb(data);
     };
     this.socket.onmatchpresence = (ev) => {
       for (const cb of this.presenceListeners) cb(ev);
     };
+  }
+
+  /** Forget cached state — call when leaving a match. */
+  resetReplayBuffer(): void {
+    this.latestByOpCode.clear();
   }
 
   // ---------- Internals ----------
