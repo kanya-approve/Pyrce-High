@@ -1,7 +1,13 @@
 controllers:
   nakama:
     type: deployment
-    replicas: 2
+    # Match state lives in-memory on the pod that owns each match. Scaling
+    # past 1 replica requires a sticky-capable ingress controller (cookie
+    # affinity) so reconnects land on the pod that owns the match — without
+    # that, a second replica silently breaks reconnect and chat routing.
+    # Scale vertically (cpu/memory) by default; bump replicas only after
+    # wiring sticky sessions.
+    replicas: 1
     strategy: RollingUpdate
     containers:
       nakama:
@@ -69,12 +75,6 @@ controllers:
               secretKeyRef:
                 name: pyrce-nakama-secrets
                 key: console_password
-          AGONES_ALLOCATOR_URL:
-            value: https://agones-allocator.agones-system.svc:443
-          AGONES_ALLOCATOR_NAMESPACE:
-            value: pyrce
-          AGONES_ALLOCATOR_FLEET:
-            value: pyrce
         probes:
           liveness:
             enabled: true
@@ -120,14 +120,9 @@ ingress:
     enabled: true
     className: nginx
     annotations:
-      # Sticky sessions: WebSocket clients must keep landing on the same
-      # pod for the lifetime of their match. Cookie-based affinity beats
-      # source-IP for mobile NATs / corporate proxies.
-      nginx.ingress.kubernetes.io/affinity: cookie
-      nginx.ingress.kubernetes.io/affinity-mode: persistent
-      nginx.ingress.kubernetes.io/session-cookie-name: pyrce-affinity
-      nginx.ingress.kubernetes.io/session-cookie-expires: '3600'
-      nginx.ingress.kubernetes.io/session-cookie-max-age: '3600'
+      # WebSockets are long-lived; default ingress proxy timeouts (60s) will
+      # close idle connections. Bump to 1h. Annotation key is NGINX-specific
+      # but harmless under controllers that ignore it.
       nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
     hosts:
       - host: play.pyrcehigh.example.com
@@ -172,38 +167,3 @@ postgres:
       memory: 1Gi
   monitoring:
     enablePodMonitor: false
-
-# Agones Fleet — pool of dedicated game-server pods. Nakama allocates one
-# per match via the Allocator API. The Agones operator must already be
-# installed cluster-wide (see infra/helm/README.md).
-agones:
-  enabled: true
-  fleet:
-    name: pyrce
-    replicas: 2
-    image:
-      repository: ghcr.io/kanya-approve/pyrce-game-server
-      tag: latest
-      pullPolicy: IfNotPresent
-    containerPort: 7777
-    health:
-      initialDelaySeconds: 10
-      periodSeconds: 5
-      failureThreshold: 3
-    env:
-      GAME_PORT: '7777'
-      HEALTH_INTERVAL_MS: '2000'
-      ROUND_TIMEOUT_S: '1800'
-    resources:
-      requests:
-        cpu: 200m
-        memory: 256Mi
-      limits:
-        cpu: 1000m
-        memory: 512Mi
-  autoscaler:
-    enabled: true
-    name: pyrce-buffer
-    bufferSize: 2
-    minReplicas: 2
-    maxReplicas: 50
