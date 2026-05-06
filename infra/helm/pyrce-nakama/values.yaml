@@ -1,12 +1,13 @@
 controllers:
   nakama:
     type: deployment
-    # Match state lives in-memory on the pod that owns each match. Scaling
-    # past 1 replica requires a sticky-capable ingress controller (cookie
-    # affinity) so reconnects land on the pod that owns the match — without
-    # that, a second replica silently breaks reconnect and chat routing.
-    # Scale vertically (cpu/memory) by default; bump replicas only after
-    # wiring sticky sessions.
+    # IMPORTANT — this chart is single-replica only and is NOT horizontally
+    # scalable. Match state lives in-memory on the pod that owns each
+    # match; with replicas > 1 a reconnecting client can land on a pod
+    # that doesn't own its match and silently break (no error surfaced
+    # to the user). Scale vertically (cpu/memory) only. Horizontal scale
+    # is a follow-up project requiring sticky-session ingress + match-
+    # router redesign — do NOT bump this value without that work.
     replicas: 1
     strategy: RollingUpdate
     containers:
@@ -167,3 +168,22 @@ postgres:
       memory: 1Gi
   monitoring:
     enablePodMonitor: false
+
+# Nakama session/runtime/console Secret. By default the chart auto-
+# generates `pyrce-nakama-secrets` on first install and preserves its
+# values across upgrades via the `lookup` trick.
+#
+# To bring your own (e.g. managed via External-Secrets / sealed-secrets /
+# Vault) set `nakamaSecret.create: false`. The chart then skips rendering
+# the Secret entirely, but the rest of the chart still expects to find a
+# Secret named EXACTLY `pyrce-nakama-secrets` in the release namespace
+# with these four keys present:
+#   session_encryption_key, session_refresh_encryption_key,
+#   runtime_http_key, console_password
+# Apply your own Secret BEFORE installing the chart, or the Nakama pod
+# will fail to start.
+#
+# (Key is named `nakamaSecret` rather than `secrets` to avoid colliding
+# with the bjw-s common library's own `secrets:` schema.)
+nakamaSecret:
+  create: true

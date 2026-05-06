@@ -2,16 +2,21 @@
 
 `pyrce-nakama/` is the only chart. It provisions:
 
-- The Nakama Deployment, Service (api/rt/console), Ingress. Nakama runs as
-  a single replica by default — match state lives in-memory on the pod that
-  owns each match, so scaling past 1 replica requires a sticky-capable
-  ingress controller (cookie affinity) so reconnects land on the right pod.
-  Scale vertically (cpu/memory) until that's wired up; one Nakama pod hosts
-  many concurrent matches.
-- A `Secret` with `session_encryption_key`, `session_refresh_encryption_key`,
-  `runtime_http_key`, `console_password` — auto-generated on first install
-  via `randAlphaNum`, preserved on upgrades via `lookup`. Rotate by deleting
-  `pyrce-nakama-secrets` and re-running `helm upgrade`.
+- The Nakama Deployment, Service (api/rt/console), Ingress. **Pinned to a
+  single replica.** Match state lives in-memory on the pod that owns each
+  match, so a second replica silently breaks reconnect/chat routing — a
+  reconnecting client can land on a pod that doesn't own its match with
+  no error surfaced. Scale vertically (cpu/memory) only; horizontal scale
+  is a follow-up project requiring sticky-session ingress + match-router
+  redesign. One Nakama pod hosts many concurrent matches.
+- A `Secret` named `pyrce-nakama-secrets` with `session_encryption_key`,
+  `session_refresh_encryption_key`, `runtime_http_key`, `console_password`
+  — auto-generated on first install via `randAlphaNum`, preserved on
+  upgrades via `lookup`. Rotate by deleting `pyrce-nakama-secrets` and
+  re-running `helm upgrade`. To bring your own (External-Secrets, sealed-
+  secrets, Vault, etc.), set `nakamaSecret.create: false` and apply a
+  Secret named exactly `pyrce-nakama-secrets` containing the four keys
+  above before installing.
 - A [CloudNativePG](https://cloudnative-pg.io/) `Cluster` (`pyrce-pg`)
   for the Nakama database — 1 instance by default. Bump
   `postgres.instances` to 3 for HA (CNPG handles sync replication +
