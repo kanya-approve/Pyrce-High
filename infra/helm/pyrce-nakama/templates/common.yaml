@@ -1,1 +1,14 @@
+{{- /*
+  Hard guard: Nakama is single-replica by design. Match state lives
+  in-memory on the pod that owns each match; with replicas > 1 a
+  reconnecting client can land on a pod that doesn't own its match and
+  silently break. Horizontal scale is a follow-up project requiring
+  sticky-session ingress + match-router redesign — until that work
+  lands this chart refuses to render any other replica count.
+*/ -}}
+{{- with .Values.controllers.nakama.replicas -}}
+  {{- if ne (. | int) 1 -}}
+    {{- fail "controllers.nakama.replicas is not configurable — Nakama is pinned to 1 replica (in-memory match state). Remove the override or set it to 1." -}}
+  {{- end -}}
+{{- end -}}
 {{- include "bjw-s.common.loader.all" . }}

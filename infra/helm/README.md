@@ -8,7 +8,9 @@
   reconnecting client can land on a pod that doesn't own its match with
   no error surfaced. Scale vertically (cpu/memory) only; horizontal scale
   is a follow-up project requiring sticky-session ingress + match-router
-  redesign. One Nakama pod hosts many concurrent matches.
+  redesign. The chart hard-fails at template time if anything other than
+  `replicas: 1` is set on `controllers.nakama` — this is enforced, not a
+  default. One Nakama pod hosts many concurrent matches.
 - A `Secret` named `pyrce-nakama-secrets` with `session_encryption_key`,
   `session_refresh_encryption_key`, `runtime_http_key`, `console_password`
   — auto-generated on first install via `randAlphaNum`, preserved on

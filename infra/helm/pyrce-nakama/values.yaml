@@ -1,14 +1,11 @@
 controllers:
   nakama:
     type: deployment
-    # IMPORTANT — this chart is single-replica only and is NOT horizontally
-    # scalable. Match state lives in-memory on the pod that owns each
-    # match; with replicas > 1 a reconnecting client can land on a pod
-    # that doesn't own its match and silently break (no error surfaced
-    # to the user). Scale vertically (cpu/memory) only. Horizontal scale
-    # is a follow-up project requiring sticky-session ingress + match-
-    # router redesign — do NOT bump this value without that work.
-    replicas: 1
+    # `replicas` is intentionally NOT configurable here. Nakama is pinned
+    # to a single replica because match state is in-memory on the pod
+    # that owns each match. The chart hard-fails at template time if
+    # an override is attempted (see templates/common.yaml). The bjw-s
+    # common library defaults replicas to 1, which is what we want.
     strategy: RollingUpdate
     containers:
       nakama:
