@@ -1,0 +1,17 @@
+# Dependencies and build output — not our code
+node_modules/
+dist/
+*.tsbuildinfo
+
+# graphify's own output
+graphify-out/
+
+# Lockfiles / vendored chart archives — noise, not concepts
+pnpm-lock.yaml
+*.tgz
+
+# Binary game assets + generated atlas JSON (huge, not semantic source)
+packages/client/public/
+
+# graphify install files — don't extract our own instructions as knowledge
+CLAUDE.md
