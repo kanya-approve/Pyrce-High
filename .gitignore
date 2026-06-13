@@ -27,3 +27,7 @@ infra/helm/*/charts/
 *.njsproj
 *.sln
 *.sw?
+.graphify/
+graphify-out/
+.graphify_*.json
+.graphify_python
