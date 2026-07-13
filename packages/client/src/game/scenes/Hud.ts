@@ -178,7 +178,7 @@ export class Hud extends Scene {
   // ---------- renderers ----------
 
   private renderVitals(): void {
-    if (!this.hpFill || !this.hpFill.scene) return;
+    if (!this.hpFill?.scene) return;
     const g = this.getGame();
     const sig = `${g.hp}/${g.maxHp}|${g.role?.roleName ?? ''}|${g.clock?.gameHour ?? ''}${g.clock?.ampm ?? ''}`;
     if (sig === this.lastVitalsSig) return;
@@ -205,7 +205,7 @@ export class Hud extends Scene {
     const atlas = this.textures.get(ATLAS_KEY);
     for (let i = 0; i < 5; i++) {
       const slot = this.hotkeySlots[i];
-      if (!slot || !slot.bg.scene) continue;
+      if (!slot?.bg.scene) continue;
       const ref = inv.hotkeys[i];
       const it = ref ? inv.items.find((x) => x.instanceId === ref) : null;
       const def = it ? ITEMS[it.itemId] : null;

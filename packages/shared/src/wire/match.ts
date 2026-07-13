@@ -320,7 +320,7 @@ export interface S2CGhostSense {
   distance: number | null;
 }
 
-export type C2SThrow = {};
+export type C2SThrow = Record<string, never>;
 
 export interface C2SDoorCodeEntry {
   x: number;
@@ -341,13 +341,13 @@ export interface S2CFxSwing {
   facing: import('../content/tilemap.js').Facing;
 }
 
-export type C2SJoinAsWatcher = {};
+export type C2SJoinAsWatcher = Record<string, never>;
 
 /** Escape via the Steel Door. Requires holding a Key Card and adjacency to the door. */
-export type C2SEscapeDoor = {};
+export type C2SEscapeDoor = Record<string, never>;
 
 /** Wash blood off self + equipped weapon. Requires standing on a bathroom-floor tile. */
-export type C2SWash = {};
+export type C2SWash = Record<string, never>;
 
 /** Toggle sprint (2x move speed, drains stamina). */
 export interface C2SSprintToggle {
@@ -367,7 +367,7 @@ export interface C2SInjectTarget {
 }
 
 /** Push the player one tile in front of you. Non-damaging. */
-export type C2SShove = {};
+export type C2SShove = Record<string, never>;
 
 /**
  * Send an anonymous PDA-to-PDA text message. Both sender and recipient

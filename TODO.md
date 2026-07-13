@@ -10,18 +10,6 @@ Numbers (P1/P2/P3) describe player-impact, not implementation effort.
 
 ---
 
-## Maps & content
-
-### P3 — Anime-name generator (`Player Names.dm`)
-- DM rolls a fake name (Tohno, Furude, …) per player for in-round
-  "real-name" reveals on death.
-- Currently `realName` defaults to `username`. To add: ship a wordlist
-  in `packages/shared/src/content/names.ts`, pick at `assignSpawns()`,
-  store in `PlayerInGame.realName`. ~1h.
-- Pure flavor; no gameplay change.
-
----
-
 ## Combat & movement extras
 
 ### P3 — School Uniform host toggle
@@ -190,11 +178,6 @@ Numbers (P1/P2/P3) describe player-impact, not implementation effort.
 - Fixed by having the smokes learn refused tiles at runtime and re-path
   around them (`blocked` set + `walkTo` in m4/m5/m6). m4 now passes
   deterministically.
-
-### P3 — Helm chart + production deploy
-- Empty `infra/helm/` slot in the original plan. Currently `infra/`
-  has only `docker-compose.yml`. Production deploy was always a
-  post-launch milestone.
 
 ### P3 — Sentry / Prometheus / Grafana wiring
 - Nakama exposes `/metrics`; nothing scrapes it yet. Client has no
