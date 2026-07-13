@@ -12,7 +12,6 @@ import {
   ITEM_SPRITES,
   ITEMS,
   OpCode,
-  wieldedItemFrame,
   type PublicCorpse,
   type PublicGroundItem,
   type PublicPlayerInGame,
@@ -58,6 +57,7 @@ import {
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
   type TilemapJson,
+  wieldedItemFrame,
 } from '@pyrce/shared';
 import tilemapData from '@pyrce/shared/src/content/tilemap/default.json' with { type: 'json' };
 import { Scene } from 'phaser';
@@ -238,11 +238,26 @@ export class GameWorld extends Scene {
         'up',
         guard(() => this.toggleNameReveal(false)),
       );
-      this.actionKeys.ONE.on('down', guard(() => this.handleHotkey(1)));
-      this.actionKeys.TWO.on('down', guard(() => this.handleHotkey(2)));
-      this.actionKeys.THREE.on('down', guard(() => this.handleHotkey(3)));
-      this.actionKeys.FOUR.on('down', guard(() => this.handleHotkey(4)));
-      this.actionKeys.FIVE.on('down', guard(() => this.handleHotkey(5)));
+      this.actionKeys.ONE.on(
+        'down',
+        guard(() => this.handleHotkey(1)),
+      );
+      this.actionKeys.TWO.on(
+        'down',
+        guard(() => this.handleHotkey(2)),
+      );
+      this.actionKeys.THREE.on(
+        'down',
+        guard(() => this.handleHotkey(3)),
+      );
+      this.actionKeys.FOUR.on(
+        'down',
+        guard(() => this.handleHotkey(4)),
+      );
+      this.actionKeys.FIVE.on(
+        'down',
+        guard(() => this.handleHotkey(5)),
+      );
     }
 
     // Persistent HUD overlay + chat overlay + lighting overlay.
@@ -1143,7 +1158,9 @@ export class GameWorld extends Scene {
     screenX: number,
     screenY: number,
   ): void {
-    document.querySelectorAll('.pyrce-ctx-menu').forEach((n) => n.remove());
+    document.querySelectorAll('.pyrce-ctx-menu').forEach((n) => {
+      n.remove();
+    });
     if (verbs.length === 0) verbs.push({ label: '(no verbs)', run: () => {} });
     const m = document.createElement('div');
     m.className = 'pyrce-ctx-menu';
@@ -1182,7 +1199,11 @@ export class GameWorld extends Scene {
    * and distance are evaluated client-side so the menu only lists what's
    * possible; the server re-checks every action.
    */
-  private openPlayerContextMenu(target: PublicPlayerInGame, screenX: number, screenY: number): void {
+  private openPlayerContextMenu(
+    target: PublicPlayerInGame,
+    screenX: number,
+    screenY: number,
+  ): void {
     const me = this.players.get(this.match.userId)?.state;
     const myRole = this.gameInfo.role?.roleId;
     const isSelf = target.userId === this.match.userId;
@@ -1209,8 +1230,7 @@ export class GameWorld extends Scene {
     if (!isSelf) {
       verbs.push({
         label: 'Vote-Kick',
-        run: () =>
-          void this.match.sendMatch(OpCode.C2S_VOTE_KICK, { targetUserId: target.userId }),
+        run: () => void this.match.sendMatch(OpCode.C2S_VOTE_KICK, { targetUserId: target.userId }),
       });
     }
     // Doppel/Vampire actually target an adjacent corpse, not a player —
@@ -1503,9 +1523,7 @@ export class GameWorld extends Scene {
         if (!moved) return;
         // Match by exact source coords — proximity matching mis-targets when
         // multiple containers cluster within 1 tile of the destination.
-        const c = this.containerHotspots.find(
-          (h) => h.x === moved.fromX && h.y === moved.fromY,
-        );
+        const c = this.containerHotspots.find((h) => h.x === moved.fromX && h.y === moved.fromY);
         if (c) {
           c.x = moved.x;
           c.y = moved.y;
@@ -1599,7 +1617,9 @@ export class GameWorld extends Scene {
           this.updateHpBar(s);
         }
         if (d.userId === this.match.userId) this.showDeathOverlay(d);
-        this.notifyHud(`${d.victimRealName || s?.state.displayName || d.userId.slice(0, 6)} died (${d.cause})`);
+        this.notifyHud(
+          `${d.victimRealName || s?.state.displayName || d.userId.slice(0, 6)} died (${d.cause})`,
+        );
         break;
       }
       case OpCode.S2C_CORPSE_SPAWN: {
@@ -2097,14 +2117,11 @@ export class GameWorld extends Scene {
     }
     if (!sprite.weapon) {
       // Underlay sits between the floor (depth 0) and the body (depth 2).
-      sprite.weapon = this.add
-        .image(sprite.rect.x, sprite.rect.y, ATLAS_KEY, frame)
-        .setDepth(1.95);
+      sprite.weapon = this.add.image(sprite.rect.x, sprite.rect.y, ATLAS_KEY, frame).setDepth(1.95);
     } else {
       sprite.weapon.setFrame(frame);
     }
   }
-
 
   private spawnPlayer(p: PublicPlayerInGame): void {
     const x = p.x * TILE + TILE / 2;
@@ -2214,7 +2231,9 @@ export class GameWorld extends Scene {
           .rectangle(x, y, TILE - 4, TILE - 4, 0x551111, 0.85)
           .setStrokeStyle(2, 0x880000)
           .setDepth(1.5);
-    const tag = c.discovered ? `† ${c.victimRealName || c.victimDisplayName}` : `† ${c.victimDisplayName}`;
+    const tag = c.discovered
+      ? `† ${c.victimRealName || c.victimDisplayName}`
+      : `† ${c.victimDisplayName}`;
     const label = this.add
       .text(x, y + TILE / 2 + 2, tag, {
         fontFamily: 'Arial',
@@ -2380,13 +2399,7 @@ export class GameWorld extends Scene {
   }
 
   /** Door right-click menu: Open/Close (server toggles) + Escape if it's the steel door. */
-  private openDoorContextMenu(
-    x: number,
-    y: number,
-    kind: string,
-    sx: number,
-    sy: number,
-  ): void {
+  private openDoorContextMenu(x: number, y: number, kind: string, sx: number, sy: number): void {
     const me = this.players.get(this.match.userId)?.state;
     const dist = me ? Math.max(Math.abs(me.x - x), Math.abs(me.y - y)) : 99;
     const verbs: Array<{ label: string; run: () => void }> = [];
@@ -2502,32 +2515,56 @@ export class GameWorld extends Scene {
  */
 function hairTintFor(color: string): number {
   switch (color) {
-    case 'black':    return 0x222222;
-    case 'white':    return 0xf2efe6;
-    case 'silver':   return 0xc0c8d0;
-    case 'gray':     return 0x888888;
-    case 'blonde':   return 0xeed98a;
-    case 'yellow':   return 0xf7e93a;
-    case 'amber':    return 0xd99c2a;
-    case 'orange':   return 0xe07a1f;
-    case 'red':      return 0xcc2e2e;
-    case 'crimson':  return 0x8a1c2e;
-    case 'pink':     return 0xff8fc0;
-    case 'magenta':  return 0xc024a0;
-    case 'brown':    return 0x7a4a26;
+    case 'black':
+      return 0x222222;
+    case 'white':
+      return 0xf2efe6;
+    case 'silver':
+      return 0xc0c8d0;
+    case 'gray':
+      return 0x888888;
+    case 'blonde':
+      return 0xeed98a;
+    case 'yellow':
+      return 0xf7e93a;
+    case 'amber':
+      return 0xd99c2a;
+    case 'orange':
+      return 0xe07a1f;
+    case 'red':
+      return 0xcc2e2e;
+    case 'crimson':
+      return 0x8a1c2e;
+    case 'pink':
+      return 0xff8fc0;
+    case 'magenta':
+      return 0xc024a0;
+    case 'brown':
+      return 0x7a4a26;
     // Auburn/reddish-brown — sits clearly between brown and red, no longer
     // dark enough to read as black.
-    case 'chestnut': return 0xb05a2a;
-    case 'green':    return 0x4caf50;
-    case 'lime':     return 0xb6ed3a;
-    case 'mint':     return 0x6fe0a8;
-    case 'teal':     return 0x2a8e8e;
-    case 'cyan':     return 0x2bd9d9;
-    case 'blue':     return 0x4477cc;
-    case 'navy':     return 0x1f2a72;
-    case 'purple':   return 0x9b4ee0;
-    case 'lavender': return 0xb59cd1;
-    default:         return 0xffffff;
+    case 'chestnut':
+      return 0xb05a2a;
+    case 'green':
+      return 0x4caf50;
+    case 'lime':
+      return 0xb6ed3a;
+    case 'mint':
+      return 0x6fe0a8;
+    case 'teal':
+      return 0x2a8e8e;
+    case 'cyan':
+      return 0x2bd9d9;
+    case 'blue':
+      return 0x4477cc;
+    case 'navy':
+      return 0x1f2a72;
+    case 'purple':
+      return 0x9b4ee0;
+    case 'lavender':
+      return 0xb59cd1;
+    default:
+      return 0xffffff;
   }
 }
 

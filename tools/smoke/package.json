@@ -10,7 +10,9 @@
     "m3": "node m3.mjs",
     "m4": "node m4.mjs",
     "m5": "node m5.mjs",
-    "m6": "node m6.mjs"
+    "m6": "node m6.mjs",
+    "m7": "node m7.mjs",
+    "browser": "node browser.mjs http://localhost:8080/"
   },
   "dependencies": {
     "@heroiclabs/nakama-js": "^2.8.0",
