@@ -54,6 +54,8 @@ import {
   type PublicGroundItem,
   ROLES,
   type RoleId,
+  rollDemographics,
+  rollUniqueDemographics,
   type S2CAnnouncement,
   type S2CBloodDrip,
   type S2CCameraFeed,
@@ -79,6 +81,7 @@ import {
   type S2CInvDelta,
   type S2CInvFull,
   type S2CLightState,
+  type S2CLobbyState,
   type S2CPaperReceived,
   type S2CPaperText,
   type S2CPhaseChange,
@@ -101,9 +104,6 @@ import {
   type S2CVoteModeTally,
   type S2CWorldGroundItemDelta,
   type S2CWorldGroundItems,
-  rollDemographics,
-  rollUniqueDemographics,
-  type S2CLobbyState,
   WIRE_PROTOCOL_VERSION,
 } from '@pyrce/shared';
 import { routeChat, sanitizeChatBody } from '../chat.js';
@@ -406,13 +406,15 @@ export function matchLoop(
           discovered: false,
           discoveredByUserId: null,
         };
-        updatePlayer(state, p.userId, { inventory: {
-          items: [],
-          hotkeys: [null, null, null, null, null],
-          equipped: null,
-          weight: 0,
-          weightCap: p.inventory.weightCap,
-        } });
+        updatePlayer(state, p.userId, {
+          inventory: {
+            items: [],
+            hotkeys: [null, null, null, null, null],
+            equipped: null,
+            weight: 0,
+            weightCap: p.inventory.weightCap,
+          },
+        });
         state.corpses[corpse.corpseId] = corpse;
         broadcastPlayerDied(dispatcher, p, null, 'Bled out');
         broadcastCorpseUpdate(dispatcher, corpse);
@@ -1130,12 +1132,14 @@ function handleInvUse(
         ...inst,
         data: { ...(inst.data ?? {}), filled: payload ?? 'unknown' },
       };
-      updatePlayer(state, player.userId, { inventory: {
-        ...player.inventory,
-        items: player.inventory.items.map((it) =>
-          it.instanceId === inst.instanceId ? updated : it,
-        ),
-      } });
+      updatePlayer(state, player.userId, {
+        inventory: {
+          ...player.inventory,
+          items: player.inventory.items.map((it) =>
+            it.instanceId === inst.instanceId ? updated : it,
+          ),
+        },
+      });
       sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
       return;
     }
@@ -1186,12 +1190,14 @@ function handleInvUse(
         ...inst,
         data: { ...(inst.data ?? {}), on: !inst.data?.['on'] },
       };
-      updatePlayer(state, player.userId, { inventory: {
-        ...player.inventory,
-        items: player.inventory.items.map((it) =>
-          it.instanceId === inst.instanceId ? updated : it,
-        ),
-      } });
+      updatePlayer(state, player.userId, {
+        inventory: {
+          ...player.inventory,
+          items: player.inventory.items.map((it) =>
+            it.instanceId === inst.instanceId ? updated : it,
+          ),
+        },
+      });
       sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
       return;
     }
@@ -1670,10 +1676,12 @@ function handlePaperWrite(
   if (!inst) return;
   const text = (req.text ?? '').slice(0, 500);
   const updated = { ...inst, data: { ...(inst.data ?? {}), text } };
-  updatePlayer(state, player.userId, { inventory: {
-    ...player.inventory,
-    items: player.inventory.items.map((it) => (it.instanceId === inst.instanceId ? updated : it)),
-  } });
+  updatePlayer(state, player.userId, {
+    inventory: {
+      ...player.inventory,
+      items: player.inventory.items.map((it) => (it.instanceId === inst.instanceId ? updated : it)),
+    },
+  });
   sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
   broadcastFxSound(dispatcher, 'writing', player.x, player.y, 0.4);
 }
@@ -1740,13 +1748,15 @@ function handleSuicide(
     discovered: false,
     discoveredByUserId: null,
   };
-  updatePlayer(state, player.userId, { inventory: {
-    items: [],
-    hotkeys: [null, null, null, null, null],
-    equipped: null,
-    weight: 0,
-    weightCap: player.inventory.weightCap,
-  } });
+  updatePlayer(state, player.userId, {
+    inventory: {
+      items: [],
+      hotkeys: [null, null, null, null, null],
+      equipped: null,
+      weight: 0,
+      weightCap: player.inventory.weightCap,
+    },
+  });
   state.corpses[corpse.corpseId] = corpse;
   broadcastPlayerDied(dispatcher, player, null, 'Suicide');
   broadcastCorpseUpdate(dispatcher, corpse);
@@ -1869,10 +1879,12 @@ function handleWash(
       const next = { ...inst.data };
       delete next['bloody'];
       const updated = { ...inst, data: next };
-      updatePlayer(state, player.userId, { inventory: {
-        ...player.inventory,
-        items: player.inventory.items.map((it) => (it.instanceId === equipId ? updated : it)),
-      } });
+      updatePlayer(state, player.userId, {
+        inventory: {
+          ...player.inventory,
+          items: player.inventory.items.map((it) => (it.instanceId === equipId ? updated : it)),
+        },
+      });
       sendInvDelta(dispatcher, state, m.sender, { upserted: [updated] });
       // Re-broadcast moved so equippedItemBloody updates for onlookers.
       broadcastPlayerMoved(dispatcher, player, tick, state);
@@ -3662,13 +3674,15 @@ function reapStaleDisconnects(
       discovered: false,
       discoveredByUserId: null,
     };
-    updatePlayer(state, p.userId, { inventory: {
-      items: [],
-      hotkeys: [null, null, null, null, null],
-      equipped: null,
-      weight: 0,
-      weightCap: p.inventory.weightCap,
-    } });
+    updatePlayer(state, p.userId, {
+      inventory: {
+        items: [],
+        hotkeys: [null, null, null, null, null],
+        equipped: null,
+        weight: 0,
+        weightCap: p.inventory.weightCap,
+      },
+    });
     state.corpses[corpse.corpseId] = corpse;
     broadcastPlayerDied(dispatcher, p, null, 'Disconnect');
     broadcastCorpseUpdate(dispatcher, corpse);
@@ -3787,9 +3801,7 @@ function seedDetectiveClue(state: PyrceMatchState): void {
       ...p,
       inventory: {
         ...p.inventory,
-        items: p.inventory.items.map((it) =>
-          it.instanceId === sheet.instanceId ? updated : it,
-        ),
+        items: p.inventory.items.map((it) => (it.instanceId === sheet.instanceId ? updated : it)),
       },
     };
   }

@@ -25,30 +25,28 @@ packages/
   shared/        @pyrce/shared        types, opcodes, content schemas
   server/        @pyrce/server        Nakama runtime modules (Rollup → dist/index.js)
   client/        @pyrce/client        Phaser 4 + Vite browser app
-  game-server/   @pyrce/game-server   Agones-managed dedicated game-server pod (Node + ws)
 
 tools/
-  smoke/                         end-to-end smoke tests (m4–m7, browser puppeteer)
+  smoke/                         end-to-end smoke tests (m1–m7, browser puppeteer)
 
 infra/
   docker-compose.yml             local Postgres + Nakama
   docker-compose.prod.yml        prod compose target
   nakama/                        nakama config
   helm/pyrce-nakama/             Helm chart (Nakama Deployment), backed by bjw-s common
-  k8s/agones/                    Agones Fleet + FleetAutoscaler manifests for the
-                                 realtime game-server tier (CRD-based, not Helm)
 
 .github/workflows/
   ci.yml                         lint + typecheck + build + helm lint
-  images.yml                     build + push pyrce-nakama / pyrce-game-server
-                                 images to ghcr.io/kanya-approve
+  images.yml                     build + push the pyrce-nakama image to
+                                 ghcr.io/kanya-approve
+  client-release.yml             build + publish the static client bundle
 
 TODO.md                          deferred / declined work, with re-implementation hints
 ```
 
 ## Architecture
 
-Three deploy tiers:
+Two deploy tiers:
 
 ```
                       ┌──────────────────────────────┐
@@ -58,23 +56,16 @@ Three deploy tiers:
                                     │ WSS
                       ┌─────────────▼────────────────┐
                       │ pyrce-nakama                 │  Helm chart, sticky-cookie ingress
-                      │ matchmaker / identity /      │
-                      │ social / lobby / chat        │
-                      └─────────────┬────────────────┘
-                                    │ Agones Allocator API (mTLS)
-                      ┌─────────────▼────────────────┐
-                      │ pyrce-game-server            │  Agones Fleet + FleetAutoscaler
-                      │ realtime round (movement,    │  one pod per match
-                      │ combat, lighting, …)         │
+                      │ identity / lobby / chat +    │
+                      │ the realtime round itself    │
+                      │ (movement, combat, lighting) │
                       └──────────────────────────────┘
 ```
 
-In v1 the realtime round logic still lives in the Nakama match handler;
-the `game-server` package is the migration target so future rounds can
-run in Agones-managed dedicated pods. The `allocateGameServer` Nakama
-RPC speaks to the Agones Allocator and returns an `address:port` to
-matched clients — when the match handler migrates, the client just
-follows the returned URL instead of staying on the Nakama match.
+Everything server-side runs in the Nakama match handler — there is no
+separate dedicated game-server tier. An Agones-managed tier was
+prototyped and dropped in `34dd09a`; if the round logic ever outgrows the
+Nakama match handler, that's the migration to revisit.
 
 ## Quick start
 
@@ -126,13 +117,27 @@ create / join lobbies, vote a mode, and play a full round.
 End-to-end smokes drive a real Nakama match against the running stack.
 
 ```bash
+node tools/smoke/m1.mjs        # lobby: auth, create, list, join, presence
+node tools/smoke/m2.mjs        # tilemap movement + presence sync
+node tools/smoke/m3.mjs        # inventory, containers, drop/pickup, craft
+node tools/smoke/m4.mjs        # combat, death, corpse, body discovery
 node tools/smoke/m5.mjs        # full Normal-mode round, role assignment, win check
 node tools/smoke/m6.mjs        # chat audience routing
 node tools/smoke/m7.mjs        # door + equipped-item fx hooks
 node tools/smoke/browser.mjs http://localhost:8080/   # puppeteer client smoke
 ```
 
-`m4.mjs` (combat + body discovery) is mode-RNG-flaky — see TODO.md.
+All eight pass against a freshly-wiped stack. Run `docker compose -f
+infra/docker-compose.yml down -v && … up -d` between full suite runs —
+the smokes reuse fixed device ids, so matches from a previous run
+accumulate in the lobby list and will fail `m1`'s match-visibility check.
+
+Note for anyone writing a new smoke: the harnesses path-find on the
+*static* tilemap, but the server also refuses moves into containers,
+corpses, and shut doors — and it rejects them silently, by re-broadcasting
+your current tile. `m4`/`m5`/`m6` therefore learn refused tiles at runtime
+and route around them (see `blocked` / `walkTo`). Skip that and your
+player will wedge against the first locker and burn every step in place.
 
 ## Architecture notes
 
@@ -154,7 +159,7 @@ maps on the state object and drained in `matchLoop`.
 
 ### Client: Phaser scene model
 `packages/client/src/game/scenes/`:
-- `Boot` / `Preload` / `MainMenu` — boot path, atlas + audio preload
+- `Boot` — boot path, atlas + audio preload
 - `LobbyBrowser` — list/create matches via Nakama RPC
 - `Lobby` — joined-match player list, mode-vote, host Start button
 - `GameWorld` — gameplay scene; tilemap, players, items, corpses, doors,

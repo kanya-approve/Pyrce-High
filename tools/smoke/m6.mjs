@@ -26,6 +26,7 @@ const OP = {
   C2S_MOVE_INTENT: 1300,
   C2S_ATTACK: 1310,
   C2S_CHAT: 1600,
+  C2S_DOOR_TOGGLE: 1700,
   S2C_PHASE_CHANGE: 2002,
   S2C_PLAYER_MOVED: 2310,
   S2C_PLAYER_DIED: 2317,
@@ -38,8 +39,17 @@ const decode = (d) => (typeof d === 'string' ? d : new TextDecoder().decode(d));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const chebyshev = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
+/**
+ * Tiles the server refused to let us walk into. The static tilemap only knows
+ * terrain, but the server also blocks containers, corpses, and shut doors
+ * (pyrceRoom.ts: entryAt(containers) / entryAt(corpses) / closedDoorAt), so the
+ * path search has to learn those the hard way and route around them.
+ */
+const blocked = new Set();
+
 function isPassable(x, y) {
   if (x < 0 || y < 0 || x >= TILEMAP.width || y >= TILEMAP.height) return false;
+  if (blocked.has(`${x},${y}`)) return false;
   const idx = TILEMAP.grid[y][x];
   return TILEMAP.tileTypes[idx]?.passable;
 }
@@ -151,15 +161,41 @@ async function main() {
   console.log(`   alice=${JSON.stringify(pos[A.session.user_id])} bob=${JSON.stringify(pos[B.session.user_id])} char=${JSON.stringify(pos[C.session.user_id])}`);
 
   console.log('2) Walk bob next to alice (range 1) so say/whisper hits him');
+  // Doors default to closed and the server silently rejects moves into shut
+  // doors / containers / corpses, so learn the tiles it refuses and re-path.
+  const DOOR_AT = new Map(TILEMAP.doors.map((d) => [`${d.x},${d.y}`, d]));
+  const DELTA = new Map(DXS.map(([dx, dy, name]) => [name, [dx, dy]]));
+  const opened = new Set();
+  const stalls = new Map();
   let steps = 0;
   while (chebyshev(pos[B.session.user_id], pos[A.session.user_id]) > 1 && steps < 100) {
-    const dir = pathStep(pos[B.session.user_id], pos[A.session.user_id], 1);
+    const from = pos[B.session.user_id];
+    const dir = pathStep(from, pos[A.session.user_id], 1);
     if (!dir) break;
+    const [dx, dy] = DELTA.get(dir) ?? [0, 0];
+    const aheadKey = `${from.x + dx},${from.y + dy}`;
+    const door = DOOR_AT.get(aheadKey);
+    if (door && !opened.has(aheadKey)) {
+      await B.socket.sendMatchState(matchId, OP.C2S_DOOR_TOGGLE, JSON.stringify({ x: door.x, y: door.y }));
+      opened.add(aheadKey);
+      await sleep(250);
+    }
     await B.socket.sendMatchState(matchId, OP.C2S_MOVE_INTENT, JSON.stringify({ dir }));
     await sleep(220);
+    const now = pos[B.session.user_id];
+    if (now.x === from.x && now.y === from.y) {
+      const n = (stalls.get(aheadKey) ?? 0) + 1;
+      stalls.set(aheadKey, n);
+      if (n >= 2) blocked.add(aheadKey);
+    } else {
+      stalls.clear();
+    }
     steps++;
   }
-  console.log(`   bob now at ${JSON.stringify(pos[B.session.user_id])} (alice ${chebyshev(pos[B.session.user_id], pos[A.session.user_id])} away)`);
+  const bobToA = chebyshev(pos[B.session.user_id], pos[A.session.user_id]);
+  console.log(`   bob now at ${JSON.stringify(pos[B.session.user_id])} (alice ${bobToA} away)`);
+  // Fail here rather than letting an out-of-range bob masquerade as a chat bug.
+  if (bobToA > 1) throw new Error(`bob could not reach alice (still ${bobToA} tiles away) — chat range test needs adjacency`);
 
   // Charlie stays put — needs to be far away to test range cutoffs.
   const cToA = chebyshev(pos[C.session.user_id], pos[A.session.user_id]);

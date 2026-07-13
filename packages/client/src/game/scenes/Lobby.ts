@@ -298,13 +298,8 @@ export class Lobby extends Scene {
     const isShowing = this.startButton.length > 0;
     if (shouldShow && !isShowing) {
       const { width, height } = this.scale.gameSize;
-      this.startButton = this.makeButton(
-        width / 2 + 40,
-        height - 90,
-        200,
-        40,
-        'Start Game',
-        () => this.handleStart(),
+      this.startButton = this.makeButton(width / 2 + 40, height - 90, 200, 40, 'Start Game', () =>
+        this.handleStart(),
       );
     } else if (!shouldShow && isShowing) {
       for (const o of this.startButton) o.destroy();

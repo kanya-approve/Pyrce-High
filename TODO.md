@@ -181,13 +181,15 @@ Numbers (P1/P2/P3) describe player-impact, not implementation effort.
 
 ## Tooling / infra
 
-### P2 — Browser smoke flake
-- `tools/smoke/m4.mjs` body-discovery test fails ~50% of runs depending
-  on which player Math.random picks for the killer role. The test
-  assumes alice (the first attacker) is civilian.
-- Fix: smoke should request a specific role assignment via a debug RPC,
-  or the smoke should detect "round ended early" and skip the body
-  discovery assertion.
+### ~~P2 — Browser smoke flake~~ (fixed)
+- `tools/smoke/m4.mjs` was believed to be mode-RNG-flaky. It wasn't: the
+  harness path-found on the static tilemap only, while the server also
+  blocks containers / corpses / shut doors and rejects those moves
+  *silently* (re-broadcasting the current tile). Alice wedged against a
+  locker and burned all 200 steps without arriving.
+- Fixed by having the smokes learn refused tiles at runtime and re-path
+  around them (`blocked` set + `walkTo` in m4/m5/m6). m4 now passes
+  deterministically.
 
 ### P3 — Helm chart + production deploy
 - Empty `infra/helm/` slot in the original plan. Currently `infra/`

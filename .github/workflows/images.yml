@@ -1,8 +1,8 @@
 name: Images
 
-# Build and push the Nakama and game-server images to GHCR on every
-# push to main and on tag pushes (`v*`). The client is a static Vite
-# bundle and ships to a CDN, not a container — see `client-deploy.yml`.
+# Build and push the Nakama image to GHCR on every push to main and on
+# tag pushes (`v*`). The client is a static Vite bundle and ships to a
+# CDN, not a container — see `client-release.yml`.
 # PR builds run but skip the push so forks don't fail on auth.
 on:
   push:
@@ -34,9 +34,6 @@ jobs:
           - name: nakama
             context: .
             dockerfile: packages/server/Dockerfile
-          - name: game-server
-            context: .
-            dockerfile: packages/game-server/Dockerfile
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

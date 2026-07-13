@@ -24,6 +24,7 @@ const TILEMAP = JSON.parse(
 const OP = {
   C2S_LOBBY_START_GAME: 1102,
   C2S_MOVE_INTENT: 1300,
+  C2S_DOOR_TOGGLE: 1700,
   C2S_ATTACK: 1310,
   C2S_INV_PICKUP: 1400,
   C2S_INV_DROP: 1401,
@@ -46,8 +47,19 @@ const decode = (d) => (typeof d === 'string' ? d : new TextDecoder().decode(d));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const chebyshev = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
+/**
+ * Tiles the server refused to let us walk into. The static tilemap only knows
+ * terrain, but the server also blocks containers, corpses, and shut doors
+ * (pyrceRoom.ts: entryAt(containers) / entryAt(corpses) / closedDoorAt), so the
+ * path search has to learn those the hard way and route around them. Without
+ * this, a walk wedges against the first locker or shut door and burns every
+ * step without ever arriving.
+ */
+const blocked = new Set();
+
 function isPassable(x, y) {
   if (x < 0 || y < 0 || x >= TILEMAP.width || y >= TILEMAP.height) return false;
+  if (blocked.has(`${x},${y}`)) return false;
   const idx = TILEMAP.grid[y][x];
   const tt = TILEMAP.tileTypes[idx];
   return tt && tt.passable;
@@ -98,6 +110,45 @@ function pathStep(start, target, acceptDist = 0, maxNodes = 5000) {
 // players are already adjacent.
 function stepTowards(player, target) {
   return pathStep(player, target, 1);
+}
+
+const DOOR_AT = new Map(TILEMAP.doors.map((d) => [`${d.x},${d.y}`, d]));
+const DELTA = new Map(DXS.map(([dx, dy, name]) => [name, [dx, dy]]));
+const openedDoors = new Set();
+
+/**
+ * Walk `sock`'s player (tracked in `pos[uid]`) until adjacent to `target`.
+ * Opens doors in the way, and marks any tile the server refuses to enter as
+ * blocked so the next pathStep routes around it. Returns true if it arrived.
+ */
+async function walkTo(sock, matchId, pos, uid, target, maxSteps = 200) {
+  const stalls = new Map();
+  let steps = 0;
+  while (pos[uid] && chebyshev(pos[uid], target) > 1 && steps < maxSteps) {
+    const from = pos[uid];
+    const dir = pathStep(from, target, 1);
+    if (!dir) break;
+    const [dx, dy] = DELTA.get(dir) ?? [0, 0];
+    const aheadKey = `${from.x + dx},${from.y + dy}`;
+    const door = DOOR_AT.get(aheadKey);
+    if (door && !openedDoors.has(aheadKey)) {
+      await sock.sendMatchState(matchId, OP.C2S_DOOR_TOGGLE, JSON.stringify({ x: door.x, y: door.y }));
+      openedDoors.add(aheadKey);
+      await sleep(250);
+    }
+    await sock.sendMatchState(matchId, OP.C2S_MOVE_INTENT, JSON.stringify({ dir }));
+    await sleep(220);
+    const now = pos[uid];
+    if (now.x === from.x && now.y === from.y) {
+      const n = (stalls.get(aheadKey) ?? 0) + 1;
+      stalls.set(aheadKey, n);
+      if (n >= 2) blocked.add(aheadKey);
+    } else {
+      stalls.clear();
+    }
+    steps++;
+  }
+  return pos[uid] ? chebyshev(pos[uid], target) <= 1 : false;
 }
 
 function inbox() {
@@ -174,30 +225,16 @@ async function main() {
   const knifeRack = lockers[0];
   console.log(`   target Locker at (${knifeRack.x},${knifeRack.y}) dist=${knifeRack.dist}`);
 
-  let steps = 0;
-  while (chebyshev(pos[A.session.user_id], knifeRack) > 1 && steps < 200) {
-    const dir = pathStep(pos[A.session.user_id], knifeRack, 1);
-    if (!dir) break;
-    await A.socket.sendMatchState(matchId, OP.C2S_MOVE_INTENT, JSON.stringify({ dir }));
-    await sleep(220);
-    steps++;
-  }
-  console.log(`   reached (${pos[A.session.user_id].x},${pos[A.session.user_id].y}) in ${steps} steps (dist now ${chebyshev(pos[A.session.user_id], knifeRack)})`);
+  await walkTo(A.socket, matchId, pos, A.session.user_id, knifeRack, 200);
+  console.log(`   reached (${pos[A.session.user_id].x},${pos[A.session.user_id].y}) (dist now ${chebyshev(pos[A.session.user_id], knifeRack)})`);
 
   console.log('3) Search lockers until we find any lethal weapon');
   let weaponInstance = null;
   let weaponContainer = null;
   for (let i = 0; i < Math.min(lockers.length, 12); i++) {
     const target = lockers[i];
-    let steps = 0;
-    while (chebyshev(pos[A.session.user_id], target) > 1 && steps < 150) {
-      const dir = pathStep(pos[A.session.user_id], target, 1);
-      if (!dir) break;
-      await A.socket.sendMatchState(matchId, OP.C2S_MOVE_INTENT, JSON.stringify({ dir }));
-      await sleep(220);
-      steps++;
-    }
-    if (chebyshev(pos[A.session.user_id], target) > 1) continue;
+    const arrived = await walkTo(A.socket, matchId, pos, A.session.user_id, target, 150);
+    if (!arrived) continue;
     const lookRes = aIn.onceOp(OP.S2C_CONTAINER_CONTENTS);
     await A.socket.sendMatchState(matchId, OP.C2S_CONTAINER_LOOK, JSON.stringify({ x: target.x, y: target.y }));
     const contents = (await Promise.race([lookRes, sleep(2000).then(() => null)]))?.container;
@@ -223,14 +260,7 @@ async function main() {
   console.log(`   equipped=${ed.equipped?.slice(0,8)}`);
 
   console.log('5) Walk to bob');
-  steps = 0;
-  while (chebyshev(pos[A.session.user_id], pos[B.session.user_id]) > 1 && steps < 200) {
-    const dir = pathStep(pos[A.session.user_id], pos[B.session.user_id], 1);
-    if (!dir) break;
-    await A.socket.sendMatchState(matchId, OP.C2S_MOVE_INTENT, JSON.stringify({ dir }));
-    await sleep(220);
-    steps++;
-  }
+  await walkTo(A.socket, matchId, pos, A.session.user_id, pos[B.session.user_id], 200);
   console.log(`   alice now (${pos[A.session.user_id].x},${pos[A.session.user_id].y}) bob at (${pos[B.session.user_id].x},${pos[B.session.user_id].y})`);
 
   console.log('6) Attack bob until he dies');
@@ -275,16 +305,9 @@ async function main() {
   let announcement = null;
   cIn.on(OP.S2C_ANNOUNCEMENT, (a) => { if (a.kind === 'body_discovered') announcement = a; });
 
-  steps = 0;
-  while (chebyshev(pos[C.session.user_id], { x: corpse.x, y: corpse.y }) > 1 && steps < 200 && !announcement) {
-    const dir = pathStep(pos[C.session.user_id], { x: corpse.x, y: corpse.y }, 1);
-    if (!dir) break;
-    await C.socket.sendMatchState(matchId, OP.C2S_MOVE_INTENT, JSON.stringify({ dir }));
-    await sleep(220);
-    steps++;
-  }
+  await walkTo(C.socket, matchId, pos, C.session.user_id, { x: corpse.x, y: corpse.y }, 200);
   await sleep(500);
-  console.log(`   charlie now (${pos[C.session.user_id].x},${pos[C.session.user_id].y}) after ${steps} steps`);
+  console.log(`   charlie now (${pos[C.session.user_id].x},${pos[C.session.user_id].y}), ${chebyshev(pos[C.session.user_id], corpse)} from the corpse`);
   if (!announcement) throw new Error('no body-discovered announcement received by charlie');
   console.log(`   announcement: "${announcement.message}"`);
 

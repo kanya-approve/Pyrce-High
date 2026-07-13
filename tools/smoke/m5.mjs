@@ -26,6 +26,7 @@ const OP = {
   C2S_MOVE_INTENT: 1300,
   C2S_ATTACK: 1310,
   C2S_INV_EQUIP: 1402,
+  C2S_DOOR_TOGGLE: 1700,
   S2C_PHASE_CHANGE: 2002,
   S2C_PLAYER_MOVED: 2310,
   S2C_PLAYER_HEALTH: 2311,
@@ -34,6 +35,7 @@ const OP = {
   S2C_CLOCK_TICK: 2320,
   S2C_GAME_RESULT: 2321,
   S2C_INV_FULL: 2400,
+  S2C_INV_DELTA: 2401,
   S2C_ANNOUNCEMENT: 2701,
 };
 
@@ -41,8 +43,17 @@ const decode = (d) => (typeof d === 'string' ? d : new TextDecoder().decode(d));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const chebyshev = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
+/**
+ * Tiles the server refused to let us walk into. The static tilemap only knows
+ * terrain, but the server also blocks containers, corpses, and shut doors
+ * (pyrceRoom.ts: entryAt(containers) / entryAt(corpses) / closedDoorAt), so the
+ * path search has to learn those the hard way and route around them.
+ */
+const blocked = new Set();
+
 function isPassable(x, y) {
   if (x < 0 || y < 0 || x >= TILEMAP.width || y >= TILEMAP.height) return false;
+  if (blocked.has(`${x},${y}`)) return false;
   const idx = TILEMAP.grid[y][x];
   const tt = TILEMAP.tileTypes[idx];
   return tt && tt.passable;
@@ -164,7 +175,7 @@ async function main() {
   const victims = all.filter(x => x.role.roleId !== 'killer');
   console.log(`   killer = ${killer.name}`);
 
-  console.log('3) Killer should have a knife auto-equipped');
+  console.log('3) Killer gets a knife in hotkey 1, holstered — then equips it');
   // Wait briefly so any in-flight S2C_INV_FULL settles.
   await sleep(300);
   const allInvFulls = killer.in.events.filter(e => e.op === OP.S2C_INV_FULL);
@@ -174,8 +185,20 @@ async function main() {
   if (!killerInv) throw new Error('no S2C_INV_FULL for killer');
   const knife = killerInv.items.find(it => it.itemId === 'knife');
   if (!knife) throw new Error('killer has no knife');
-  if (killerInv.equipped !== knife.instanceId) throw new Error('knife is not equipped');
-  console.log(`   killer has knife ${knife.instanceId.slice(0,8)}, equipped=${killerInv.equipped === knife.instanceId}`);
+  // Modes grant the knife `equip: false, hotkey: 1`. It must NOT be auto-equipped:
+  // equippedItemId is broadcast to onlookers, so spawning knife-in-hand would
+  // reveal the killer instantly. The player equips it themselves (hotkey 1).
+  if (killerInv.hotkeys[0] !== knife.instanceId) throw new Error('knife is not in hotkey slot 1');
+  if (killerInv.equipped !== null) throw new Error(`knife must start holstered, got equipped=${killerInv.equipped}`);
+  console.log(`   killer has knife ${knife.instanceId.slice(0,8)} in hotkey 1, holstered`);
+
+  // Equipping replies with S2C_INV_DELTA carrying just the changed field.
+  const equipDelta = killer.in.onceOp(OP.S2C_INV_DELTA);
+  await killer.s.socket.sendMatchState(matchId, OP.C2S_INV_EQUIP, JSON.stringify({ instanceId: knife.instanceId }));
+  const delta = await Promise.race([equipDelta, sleep(3000).then(() => null)]);
+  if (!delta) throw new Error('no S2C_INV_DELTA after equip');
+  if (delta.equipped !== knife.instanceId) throw new Error(`equip failed: equipped=${delta.equipped}`);
+  console.log(`   killer equipped the knife (hotkey 1)`);
 
   console.log('4) Verify clock ticks are firing');
   await sleep(1500);
@@ -186,19 +209,51 @@ async function main() {
   console.log('5) Killer hunts victims — walk + attack each in turn');
   const gameResult = killer.in.onceOp(OP.S2C_GAME_RESULT);
 
+  // Doors default to closed, and the server silently rejects a move onto a
+  // closed-door tile (pyrceRoom.ts closedDoorAt). pathStep only sees static
+  // terrain — the door tile is plain floor — so without this the killer wedges
+  // against the first doorway forever. Open each door as we reach it.
+  const DOOR_AT = new Map(TILEMAP.doors.map((d) => [`${d.x},${d.y}`, d]));
+  const DELTA = new Map(DXS.map(([dx, dy, name]) => [name, [dx, dy]]));
+  const opened = new Set();
+  async function openDoorAhead(from, dir) {
+    const [dx, dy] = DELTA.get(dir) ?? [0, 0];
+    const key = `${from.x + dx},${from.y + dy}`;
+    const door = DOOR_AT.get(key);
+    if (!door || opened.has(key)) return;
+    await killer.s.socket.sendMatchState(matchId, OP.C2S_DOOR_TOGGLE, JSON.stringify({ x: door.x, y: door.y }));
+    opened.add(key);
+    await sleep(250);
+  }
+
   for (const v of victims) {
     if (!pos[v.s.session.user_id]) continue;
     console.log(`   walking to ${v.name} at ${JSON.stringify(pos[v.s.session.user_id])}`);
     let steps = 0;
+    const stalls = new Map();
     while (
       pos[killer.s.session.user_id] &&
       chebyshev(pos[killer.s.session.user_id], pos[v.s.session.user_id]) > 1 &&
       steps < 200
     ) {
-      const dir = pathStep(pos[killer.s.session.user_id], pos[v.s.session.user_id], 1);
+      const from = pos[killer.s.session.user_id];
+      const dir = pathStep(from, pos[v.s.session.user_id], 1);
       if (!dir) break;
+      const [dx, dy] = DELTA.get(dir) ?? [0, 0];
+      const aheadKey = `${from.x + dx},${from.y + dy}`;
+      await openDoorAhead(from, dir);
       await killer.s.socket.sendMatchState(matchId, OP.C2S_MOVE_INTENT, JSON.stringify({ dir }));
       await sleep(220);
+      const now = pos[killer.s.session.user_id];
+      if (now.x === from.x && now.y === from.y) {
+        // Move refused (or dropped). Two strikes on the same tile and we treat
+        // it as unwalkable, so the next pathStep routes around it.
+        const n = (stalls.get(aheadKey) ?? 0) + 1;
+        stalls.set(aheadKey, n);
+        if (n >= 2) blocked.add(aheadKey);
+      } else {
+        stalls.clear();
+      }
       steps++;
     }
     if (chebyshev(pos[killer.s.session.user_id], pos[v.s.session.user_id]) > 1) {
@@ -226,8 +281,8 @@ async function main() {
   const result = await Promise.race([gameResult, sleep(8000).then(() => null)]);
   if (!result) throw new Error('no game result within 8s after killing all victims');
   console.log(`   reason=${result.reason} summary="${result.summary}"`);
-  console.log(`   winners: ${result.winners.map(w => `${w.username}(${w.roleId})`).join(', ')}`);
-  console.log(`   reveals: ${result.reveals.map(r => `${r.username}=${r.roleId}${r.isAlive?'':'†'}`).join(', ')}`);
+  console.log(`   winners: ${result.winners.map(w => `${w.realName}(${w.roleId})`).join(', ')}`);
+  console.log(`   reveals: ${result.reveals.map(r => `${r.realName}=${r.roleId}${r.isAlive?'':'†'}`).join(', ')}`);
   if (!result.winners.find(w => w.userId === killer.s.session.user_id)) {
     throw new Error('killer did not win');
   }

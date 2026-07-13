@@ -85,13 +85,18 @@ export class ChatOverlay extends Scene {
       .setDepth(1500);
 
     this.add
-      .text(12, height - hintBottom, 'press T or Enter to chat · /shout /whisper /ooc /emote /dead', {
-        fontFamily: 'Arial',
-        fontSize: 11,
-        color: '#888888',
-        backgroundColor: '#000000aa',
-        padding: { left: 6, right: 6, top: 2, bottom: 2 },
-      })
+      .text(
+        12,
+        height - hintBottom,
+        'press T or Enter to chat · /shout /whisper /ooc /emote /dead',
+        {
+          fontFamily: 'Arial',
+          fontSize: 11,
+          color: '#888888',
+          backgroundColor: '#000000aa',
+          padding: { left: 6, right: 6, top: 2, bottom: 2 },
+        },
+      )
       .setOrigin(0, 1)
       .setScrollFactor(0)
       .setDepth(1500);

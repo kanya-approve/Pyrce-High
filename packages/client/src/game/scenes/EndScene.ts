@@ -111,8 +111,7 @@ export class EndScene extends Scene {
       this.offMatchData = match.onMatchData((msg) => {
         if (msg.op_code !== OpCode.S2C_PHASE_CHANGE) return;
         try {
-          const data =
-            typeof msg.data === 'string' ? msg.data : new TextDecoder().decode(msg.data);
+          const data = typeof msg.data === 'string' ? msg.data : new TextDecoder().decode(msg.data);
           const payload = JSON.parse(data) as S2CPhaseChange;
           if (payload.phase === MatchPhase.Lobby) {
             this.scene.start('Lobby', { matchId: this.matchId, presences: [], hostUserId: null });
@@ -128,5 +127,4 @@ export class EndScene extends Scene {
     this.offMatchData?.();
     this.offMatchData = null;
   }
-
 }

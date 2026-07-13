@@ -1,3 +1,13 @@
 packages:
   - 'packages/*'
   - 'tools/*'
+
+# pnpm 11 refuses to run a dependency's install scripts until they are
+# explicitly allowed or denied here, and `pnpm install` exits 1
+# (ERR_PNPM_IGNORED_BUILDS) while any are undeclared.
+allowBuilds:
+  # puppeteer's postinstall fetches the Chromium build that tools/smoke's
+  # browser.mjs drives. Without it the browser smoke has no browser.
+  puppeteer: true
+  # Analytics ping only — nothing depends on it running.
+  '@scarf/scarf': false
