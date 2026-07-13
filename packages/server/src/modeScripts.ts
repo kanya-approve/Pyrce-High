@@ -121,7 +121,7 @@ const WITCH: ModeScript = {
   onDeath(state, victim, _attackerUserId, ctx) {
     if (victim.roleId !== 'witch') return;
     state.scheduledRevives ??= [];
-    const used = (victim.roleData?.['revives'] as number | undefined) ?? 0;
+    const used = (victim.roleData?.revives as number | undefined) ?? 0;
     if (used >= WITCH_MAX_REVIVES) return;
     victim.roleData = { ...(victim.roleData ?? {}), revives: used + 1 };
     state.scheduledRevives.push({
@@ -134,7 +134,7 @@ const WITCH: ModeScript = {
     let nearby = 0;
     for (const uid in state.players) {
       const p = state.players[uid];
-      if (!p || !p.isAlive) continue;
+      if (!p?.isAlive) continue;
       if (p.userId === attacker.userId) continue;
       if (p.roleId === 'witch') continue;
       const d = Math.max(Math.abs(p.x - attacker.x), Math.abs(p.y - attacker.y));
@@ -146,7 +146,7 @@ const WITCH: ModeScript = {
     state.scheduledButterfly ??= [];
     state.scheduledButterfly.push({ x: attacker.x, y: attacker.y });
   },
-  onAbility(state, user, ability, ctx) {
+  onAbility(_state, user, ability, ctx) {
     if (user.roleId !== 'witch') return false;
     if (ability !== 'invisablewalk') return false;
     if (user.stamina < 20) return false;
@@ -237,10 +237,10 @@ const VAMPIRE: ModeScript = {
 const DOPPELGANGER: ModeScript = {
   onAttack(_state, attacker, _victim, _weaponName, _ctx) {
     if (attacker.roleId !== 'doppelganger') return;
-    if (!attacker.roleData?.['disguiseAsUserId']) return;
+    if (!attacker.roleData?.disguiseAsUserId) return;
     const next = { ...(attacker.roleData ?? {}) };
-    delete next['disguiseAsUserId'];
-    delete next['disguiseUsername'];
+    delete next.disguiseAsUserId;
+    delete next.disguiseUsername;
     attacker.roleData = next;
   },
 };

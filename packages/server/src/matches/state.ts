@@ -349,9 +349,9 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
   const equippedInst = p.inventory.equipped
     ? p.inventory.items.find((i) => i.instanceId === p.inventory.equipped)
     : null;
-  const disguiseAs = p.roleData?.['disguiseAsUserId'] as string | undefined;
-  const disguiseDisplayName = p.roleData?.['disguiseDisplayName'] as string | undefined;
-  const disguiseHairId = p.roleData?.['disguiseHairId'] as string | undefined;
+  const disguiseAs = p.roleData?.disguiseAsUserId as string | undefined;
+  const disguiseDisplayName = p.roleData?.disguiseDisplayName as string | undefined;
+  const disguiseHairId = p.roleData?.disguiseHairId as string | undefined;
   // Doppelganger weapon-hide: while disguised, the equipped item is
   // suppressed in the public view so the disguise isn't trivially blown
   // by a visible knife sprite. Self-targeted broadcasts use a different
@@ -370,7 +370,7 @@ export function toPublicPlayerInGame(p: PlayerInGame): PublicPlayerInGame {
     maxHp: p.maxHp,
     isAlive: p.isAlive,
     equippedItemId: hideEquipped ? null : (equippedInst?.itemId ?? null),
-    equippedItemBloody: !hideEquipped && equippedInst?.data?.['bloody'] === true,
+    equippedItemBloody: !hideEquipped && equippedInst?.data?.bloody === true,
     ...(disguiseAs ? { disguiseAsUserId: disguiseAs } : {}),
     ...(disguiseDisplayName ? { disguiseDisplayName } : {}),
     ...(disguiseHairId ? { disguiseHairId } : {}),

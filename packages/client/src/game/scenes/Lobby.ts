@@ -162,7 +162,7 @@ export class Lobby extends Scene {
     // Async match-data callbacks can fire after a scene transition has
     // already destroyed our text object — Phaser will then NPE deep
     // inside Frame.updateUVs when we try to setText. Guard against it.
-    if (!this.playerListText || !this.playerListText.scene || !this.playerListText.active) {
+    if (!this.playerListText?.scene || !this.playerListText.active) {
       return;
     }
     if (this.presences.size === 0) {

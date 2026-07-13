@@ -290,7 +290,7 @@ export class GameWorld extends Scene {
       // Allow the browser menu inside our own DOM popups (chat <input>
       // etc.) so users can paste / select.
       const tgt = e.target as HTMLElement | null;
-      if (tgt && tgt.closest('input, textarea, .pyrce-allow-ctx')) return;
+      if (tgt?.closest('input, textarea, .pyrce-allow-ctx')) return;
       e.preventDefault();
     };
     document.addEventListener('contextmenu', suppressCtxMenu);
@@ -613,8 +613,7 @@ export class GameWorld extends Scene {
       const list = groups.get(room) ?? [];
       for (const e of list) {
         const row = document.createElement('div');
-        row.style.cssText =
-          'padding:4px 0;border-bottom:1px solid #224;color:' + (e.isAlive ? '#dddddd' : '#aa6666');
+        row.style.cssText = `padding:4px 0;border-bottom:1px solid #224;color:${e.isAlive ? '#dddddd' : '#aa6666'}`;
         row.textContent = `${e.displayName.padEnd(28, ' ')} ${e.condition}`;
         container.appendChild(row);
       }
@@ -809,7 +808,7 @@ export class GameWorld extends Scene {
         tileCenter(start).x,
         tileCenter(start).y,
         ATLAS_KEY,
-        haveDragon ? headFrame : (ITEM_SPRITES['black_feather'] ?? 0),
+        haveDragon ? headFrame : (ITEM_SPRITES.black_feather ?? 0),
       )
       .setDepth(900);
     const body: Phaser.GameObjects.Image[] = [];

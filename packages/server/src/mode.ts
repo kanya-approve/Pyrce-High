@@ -12,7 +12,6 @@ import {
   type GameModeDef,
   type ItemGrant,
   ROLES,
-  type RoleAssignment,
   type RoleId,
   type RoleReveal,
   type WinCondition,

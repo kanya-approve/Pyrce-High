@@ -54,7 +54,6 @@ import {
   type PublicGroundItem,
   ROLES,
   type RoleId,
-  rollDemographics,
   rollUniqueDemographics,
   type S2CAnnouncement,
   type S2CBloodDrip,
@@ -64,7 +63,6 @@ import {
   type S2CContainerContents,
   type S2CContainerMoved,
   type S2CCorpseContents,
-  type S2CCorpseDespawn,
   type S2CCorpseSpawn,
   type S2CCraftResult,
   type S2CDoorCode,
@@ -259,7 +257,7 @@ export function matchLeave(
       // Stamp the disconnect tick. matchLoop kills the player if they're
       // still gone after RECONNECT_GRACE_TICKS so the round can resolve.
       const player = state.players[p.userId];
-      if (player && player.isAlive) player.disconnectedAtTick = tick;
+      if (player?.isAlive) player.disconnectedAtTick = tick;
     }
     logger.info('match leave (phase=%s): user=%s', state.phase, p.userId);
   }
@@ -314,7 +312,7 @@ export function matchLoop(
   if (tick % 80 === 0) {
     for (const uid in state.players) {
       const p = state.players[uid];
-      if (!p || !p.isAlive || p.roleId !== 'vampire' || p.hp <= 1) continue;
+      if (!p?.isAlive || p.roleId !== 'vampire' || p.hp <= 1) continue;
       p.hp -= 1;
       broadcastPlayerHealth(dispatcher, p);
       const pres = state.presences[uid];
@@ -333,7 +331,7 @@ export function matchLoop(
   if (state.sprinting && tick % SPRINT_DRAIN_INTERVAL_TICKS === 0) {
     for (const uid in state.sprinting) {
       const p = state.players[uid];
-      if (!p || !p.isAlive) {
+      if (!p?.isAlive) {
         delete state.sprinting[uid];
         if (state.lastSprintDrainTick) delete state.lastSprintDrainTick[uid];
         continue;
@@ -375,7 +373,7 @@ export function matchLoop(
     for (const uid in state.bleedUntilTick) {
       const until = state.bleedUntilTick[uid] ?? 0;
       const p = state.players[uid];
-      if (!p || !p.isAlive) {
+      if (!p?.isAlive) {
         delete state.bleedUntilTick[uid];
         continue;
       }
@@ -426,10 +424,10 @@ export function matchLoop(
   // Drop expired witch invisibility.
   for (const uid in state.players) {
     const p = state.players[uid];
-    const until = p?.roleData?.['invisableUntilTick'] as number | undefined;
+    const until = p?.roleData?.invisableUntilTick as number | undefined;
     if (p && until !== undefined && tick >= until) {
       const next = { ...(p.roleData ?? {}) };
-      delete next['invisableUntilTick'];
+      delete next.invisableUntilTick;
       p.roleData = next;
       broadcastPlayerMoved(dispatcher, p, tick, state);
     }
@@ -444,7 +442,7 @@ export function matchLoop(
       if (!corpseId) continue;
       const corpse = state.corpses[corpseId];
       const dragger = state.players[userId];
-      if (!corpse || !dragger || !dragger.isAlive) {
+      if (!corpse || !dragger?.isAlive) {
         delete state.pullingCorpse[userId];
         continue;
       }
@@ -914,7 +912,7 @@ function handleMoveIntent(
 
   // Footstep audio at low volume; range-attenuated by the client.
   // Witch invisablewalk: silent steps so the disguise isn't blown by sound.
-  const invUntil = player.roleData?.['invisableUntilTick'] as number | undefined;
+  const invUntil = player.roleData?.invisableUntilTick as number | undefined;
   if (invUntil === undefined || tick >= invUntil) {
     broadcastFxSound(dispatcher, 'footsteps', nx, ny, 0.25);
   }
@@ -1144,7 +1142,7 @@ function handleInvUse(
       return;
     }
     case 'syringe': {
-      const filled = inst.data?.['filled'];
+      const filled = inst.data?.filled;
       if (!filled) {
         sendError(dispatcher, m.sender, 'empty_syringe', 'fill the syringe first');
         return;
@@ -1188,7 +1186,7 @@ function handleInvUse(
       // ITEMS.lightRadius today; the toggle ramps that conditionally.
       const updated = {
         ...inst,
-        data: { ...(inst.data ?? {}), on: !inst.data?.['on'] },
+        data: { ...(inst.data ?? {}), on: !inst.data?.on },
       };
       updatePlayer(state, player.userId, {
         inventory: {
@@ -1313,7 +1311,7 @@ function handleInvUse(
       return;
     }
     case 'paper_view': {
-      const text = (inst.data?.['text'] as string | undefined) ?? '(blank)';
+      const text = (inst.data?.text as string | undefined) ?? '(blank)';
       const payload: S2CPaperText = { instanceId: inst.instanceId, text };
       dispatcher.broadcastMessage(
         OpCode.S2C_PAPER_TEXT,
@@ -1328,7 +1326,7 @@ function handleInvUse(
     case 'paper_write': {
       // Tells the client to open a write modal; the client then sends
       // C2S_PAPER_WRITE { instanceId, text } to actually persist text.
-      const text = (inst.data?.['text'] as string | undefined) ?? '';
+      const text = (inst.data?.text as string | undefined) ?? '';
       const payload: S2CPaperText = { instanceId: inst.instanceId, text };
       dispatcher.broadcastMessage(
         OpCode.S2C_PAPER_TEXT,
@@ -1344,7 +1342,7 @@ function handleInvUse(
       // The use-handler is the launch step; client sends C2S_PAPER_AIRPLANE
       // with the target pick. Bounce a paper-text echo so the user sees
       // what's currently written.
-      const text = (inst.data?.['text'] as string | undefined) ?? '';
+      const text = (inst.data?.text as string | undefined) ?? '';
       const payload: S2CPaperText = { instanceId: inst.instanceId, text };
       dispatcher.broadcastMessage(
         OpCode.S2C_PAPER_TEXT,
@@ -1439,9 +1437,9 @@ function handleViewProfile(
   // Doppelganger profile spoof: when target is a disguised doppel, return
   // the spoofed stats (Perfect / 100 HP / alive) under the copied corpse's
   // display name. Looking at yourself always shows real stats.
-  const disguiseDisplayName = target.roleData?.['disguiseDisplayName'] as string | undefined;
-  const disguiseHp = target.roleData?.['disguiseProfileHp'] as number | undefined;
-  const disguiseMaxHp = target.roleData?.['disguiseProfileMaxHp'] as number | undefined;
+  const disguiseDisplayName = target.roleData?.disguiseDisplayName as string | undefined;
+  const disguiseHp = target.roleData?.disguiseProfileHp as number | undefined;
+  const disguiseMaxHp = target.roleData?.disguiseProfileMaxHp as number | undefined;
   const isSpoofed =
     target.userId !== viewer.userId && target.roleId === 'doppelganger' && !!disguiseDisplayName;
   const payload: S2CProfileView = isSpoofed
@@ -1489,7 +1487,7 @@ function handleDragCorpse(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SDragCorpse>(m.data);
   if (!req) return;
   const corpse = state.corpses[req.corpseId];
@@ -1528,7 +1526,7 @@ function handleVampireDrain(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   if (player.roleId !== 'vampire') {
     sendError(dispatcher, m.sender, 'wrong_role', 'only the Vampire can drain a corpse');
     return;
@@ -1549,7 +1547,7 @@ function handleVampireDrain(
   player.hp = Math.min(player.maxHp, player.hp + VAMPIRE_DRAIN_HEAL);
   player.roleData = {
     ...(player.roleData ?? {}),
-    drained: ((player.roleData?.['drained'] as number | undefined) ?? 0) + 1,
+    drained: ((player.roleData?.drained as number | undefined) ?? 0) + 1,
   };
   broadcastPlayerHealth(dispatcher, player);
   sendPlayerHP(dispatcher, m.sender, player);
@@ -1570,7 +1568,7 @@ function handleDoppelgangerCopy(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   if (player.roleId !== 'doppelganger') {
     sendError(dispatcher, m.sender, 'wrong_role', 'only the Doppelganger can copy a corpse');
     return;
@@ -1609,7 +1607,7 @@ function handleRoleAbility(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SRoleAbility>(m.data);
   if (!req) return;
   const modeDef = getMode(effectiveModeId(state));
@@ -1643,7 +1641,7 @@ function handlePullToggle(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SPullToggle>(m.data);
   if (!req) return;
   state.pullingCorpse ??= {};
@@ -1669,7 +1667,7 @@ function handlePaperWrite(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SPaperWrite>(m.data);
   if (!req) return;
   const inst = findInstance(player.inventory, req.instanceId);
@@ -1693,7 +1691,7 @@ function handlePaperAirplane(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const sender = state.players[m.sender.userId];
-  if (!sender || !sender.isAlive) return;
+  if (!sender?.isAlive) return;
   const req = parseBody<C2SPaperAirplane>(m.data);
   if (!req) return;
   const inst = findInstance(sender.inventory, req.instanceId);
@@ -1704,7 +1702,7 @@ function handlePaperAirplane(
     sendError(dispatcher, m.sender, 'no_target', 'target not in match');
     return;
   }
-  const text = (inst.data?.['text'] as string | undefined) ?? '';
+  const text = (inst.data?.text as string | undefined) ?? '';
   const payload: S2CPaperReceived = { fromDisplayName: sender.displayName, text };
   dispatcher.broadcastMessage(
     OpCode.S2C_PAPER_RECEIVED,
@@ -1730,7 +1728,7 @@ function handleSuicide(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   player.hp = 0;
   player.isAlive = false;
   player.isWatching = true;
@@ -1813,7 +1811,7 @@ function handleEscapeDoor(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   if (player.hasEscaped) return;
   if (!tilemap.isAdjacentToEscapeDoor(player.x, player.y)) {
     sendError(dispatcher, m.sender, 'no_escape_door', 'no escape door adjacent');
@@ -1861,7 +1859,7 @@ function handleWash(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   if ((state.washingUntilTick?.[player.userId] ?? 0) > tick) return;
   if (!tilemap.isBathroomFloor(player.x, player.y)) {
     sendError(dispatcher, m.sender, 'no_sink', 'must be at a sink (bathroom)');
@@ -1875,9 +1873,9 @@ function handleWash(
   if (equipId) {
     const idx = player.inventory.items.findIndex((it) => it.instanceId === equipId);
     const inst = idx >= 0 ? player.inventory.items[idx] : undefined;
-    if (inst?.data?.['bloody']) {
+    if (inst?.data?.bloody) {
       const next = { ...inst.data };
-      delete next['bloody'];
+      delete next.bloody;
       const updated = { ...inst, data: next };
       updatePlayer(state, player.userId, {
         inventory: {
@@ -1910,7 +1908,7 @@ function handleSprintToggle(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SSprintToggle>(m.data);
   if (!req) return;
   state.sprinting ??= {};
@@ -1943,9 +1941,9 @@ function handlePlantItem(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SPlantItem>(m.data);
-  if (!req || !req.target) return;
+  if (!req?.target) return;
   const inst = player.inventory.items.find((it) => it.instanceId === req.instanceId);
   if (!inst) return;
   if (req.target.kind === 'corpse') {
@@ -2009,11 +2007,11 @@ function handleInjectTarget(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SInjectTarget>(m.data);
   if (!req) return;
   const target = state.players[req.targetUserId];
-  if (!target || !target.isAlive) return;
+  if (!target?.isAlive) return;
   if (target.userId === player.userId) {
     sendError(dispatcher, m.sender, 'self_target', 'use C2S_INV_USE for self-injection');
     return;
@@ -2024,7 +2022,7 @@ function handleInjectTarget(
   }
   const inst = player.inventory.items.find((it) => it.instanceId === req.instanceId);
   if (!inst || inst.itemId !== 'syringe') return;
-  const filled = inst.data?.['filled'];
+  const filled = inst.data?.filled;
   if (!filled) {
     sendError(dispatcher, m.sender, 'empty_syringe', 'fill the syringe first');
     return;
@@ -2075,7 +2073,7 @@ function handleShove(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   if ((state.lastShoveTick?.[player.userId] ?? 0) + SHOVE_COOLDOWN_TICKS > tick) return;
   const delta = DIRECTION_DELTAS[player.facing];
   if (!delta) return;
@@ -2084,7 +2082,7 @@ function handleShove(
   let target: PlayerInGame | null = null;
   for (const uid in state.players) {
     const p = state.players[uid];
-    if (p && p.isAlive && p.x === fx && p.y === fy) {
+    if (p?.isAlive && p.x === fx && p.y === fy) {
       target = p;
       break;
     }
@@ -2124,9 +2122,9 @@ function handlePdaSend(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const sender = state.players[m.sender.userId];
-  if (!sender || !sender.isAlive) return;
+  if (!sender?.isAlive) return;
   const req = parseBody<C2SPdaSend>(m.data);
-  if (!req || !req.targetUserId) return;
+  if (!req?.targetUserId) return;
   const body = String(req.body ?? '')
     .trim()
     .slice(0, PDA_MAX_BODY);
@@ -2137,7 +2135,7 @@ function handlePdaSend(
     return;
   }
   const target = state.players[req.targetUserId];
-  if (!target || !target.isAlive) return;
+  if (!target?.isAlive) return;
   const targetHasPda = target.inventory.items.some((it) => it.itemId === 'pda');
   if (!targetHasPda) {
     sendError(dispatcher, m.sender, 'target_no_pda', 'recipient is not carrying a PDA');
@@ -2169,7 +2167,7 @@ function handleContainerPush(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SContainerPush>(m.data);
   if (!req) return;
   // Resolve container by coords (matches C2S_CONTAINER_LOOK addressing).
@@ -2209,7 +2207,7 @@ function handleContainerPush(
   }
   for (const uid in state.players) {
     const o = state.players[uid];
-    if (o && o.isAlive && o.x === nx && o.y === ny) return;
+    if (o?.isAlive && o.x === nx && o.y === ny) return;
   }
   const fromX = c.x;
   const fromY = c.y;
@@ -2244,7 +2242,7 @@ function handleCorpsePush(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SCorpsePush>(m.data);
   if (!req) return;
   const c = state.corpses[req.corpseId];
@@ -2281,7 +2279,7 @@ function handleLightSwitchToggle(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SLightSwitchToggle>(m.data);
   if (!req?.tag) return;
   const sw = tilemap.adjacentLightSwitch(player.x, player.y);
@@ -2314,7 +2312,7 @@ function handleCameraView(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   if (!tilemap.isAdjacentToMonitor(player.x, player.y)) {
     sendError(dispatcher, m.sender, 'no_monitor', 'must stand next to a security monitor');
     return;
@@ -2350,7 +2348,7 @@ function handleTapeView(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   if (!tilemap.isAdjacentToMonitor(player.x, player.y)) {
     sendError(dispatcher, m.sender, 'no_monitor', 'must stand next to a security monitor');
     return;
@@ -2406,7 +2404,7 @@ function handleTapeDelete(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   if (!tilemap.isAdjacentToMonitor(player.x, player.y)) {
     sendError(dispatcher, m.sender, 'no_monitor', 'must stand next to a security monitor');
     return;
@@ -2431,7 +2429,7 @@ function handleOfferEyes(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const sender = state.players[m.sender.userId];
-  if (!sender || !sender.isAlive) return;
+  if (!sender?.isAlive) return;
   if (sender.roleId !== 'shinigami') {
     sendError(dispatcher, m.sender, 'wrong_role', 'only Shinigami can offer Eyes');
     return;
@@ -2439,7 +2437,7 @@ function handleOfferEyes(
   const req = parseBody<C2SOfferEyes>(m.data);
   if (!req?.targetUserId) return;
   const target = state.players[req.targetUserId];
-  if (!target || !target.isAlive || target.userId === sender.userId) return;
+  if (!target?.isAlive || target.userId === sender.userId) return;
   if (Math.max(Math.abs(target.x - sender.x), Math.abs(target.y - sender.y)) > 5) {
     sendError(dispatcher, m.sender, 'too_far', 'target out of range');
     return;
@@ -2474,7 +2472,7 @@ function handleAcceptEyes(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SAcceptEyes>(m.data);
   if (!req) return;
   const offer = state.eyeOffers?.[player.userId];
@@ -2588,7 +2586,7 @@ function handleVoteKick(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const voter = state.players[m.sender.userId];
-  if (!voter || !voter.isAlive) return;
+  if (!voter?.isAlive) return;
   const req = parseBody<C2SVoteKick>(m.data);
   if (!req) return;
   state.kickVotes ??= {};
@@ -2630,7 +2628,7 @@ function handleVoteKick(
       null,
       true,
     );
-    if (resolved && targetPlayer && targetPlayer.isAlive) {
+    if (resolved && targetPlayer?.isAlive) {
       // Force-kill via the same path as the disconnect reaper.
       targetPlayer.hp = 0;
       targetPlayer.isAlive = false;
@@ -2702,7 +2700,7 @@ function handleVoteEndGame(
 ): void {
   if (state.phase !== MatchPhase.InGame || state.ended) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SVoteEndGame>(m.data);
   if (!req) return;
   state.endGameVotes ??= {};
@@ -2756,7 +2754,7 @@ function handleVendingBuy(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   const req = parseBody<C2SVendingBuy>(m.data);
   if (!req) return;
   // Adjacent check.
@@ -2856,7 +2854,7 @@ function handleThrow(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const player = state.players[m.sender.userId];
-  if (!player || !player.isAlive) return;
+  if (!player?.isAlive) return;
   if ((state.koUntilTick?.[m.sender.userId] ?? 0) > tick) return;
   if ((state.frozenUntilTick?.[m.sender.userId] ?? 0) > tick) return;
   const equippedId = player.inventory.equipped;
@@ -3137,7 +3135,7 @@ function handleChat(
   const senderPresence = state.presences[m.sender.userId];
   if (!senderPresence) return;
   const req = parseBody<C2SChat>(m.data);
-  if (!req || !req.channel) return;
+  if (!req?.channel) return;
   const body = sanitizeChatBody(req.body);
   if (body.length === 0) return;
 
@@ -3200,7 +3198,7 @@ function handleTyping(
   const sender = state.players[m.sender.userId];
   if (!sender) return;
   const req = parseBody<C2STypingBegin | C2STypingEnd>(m.data);
-  if (!req || !req.channel) return;
+  if (!req?.channel) return;
 
   // Use the same proximity rules as the chat itself; typing indicators on
   // OOC / dead are dropped (too noisy).
@@ -3225,7 +3223,7 @@ function handleAttack(
 ): void {
   if (state.phase !== MatchPhase.InGame) return;
   const attacker = state.players[m.sender.userId];
-  if (!attacker || !attacker.isAlive) return;
+  if (!attacker?.isAlive) return;
   if ((state.koUntilTick?.[m.sender.userId] ?? 0) > tick) return;
 
   const req = parseBody<C2SAttack>(m.data) ?? {};
@@ -3348,7 +3346,7 @@ function handleSearchCorpse(
   // No killer or killer dead → auto-grant. Killer is the searcher → auto.
   const killerId = c.killerUserId;
   const killer = killerId ? state.players[killerId] : null;
-  if (killer && killer.isAlive && killer.userId !== player.userId) {
+  if (killer?.isAlive && killer.userId !== player.userId) {
     const requestId = newCorpseId(); // reuse the random-id helper
     state.searchRequests ??= {};
     state.searchRequests[requestId] = {
@@ -3509,7 +3507,7 @@ function drainScheduledEffects(
         continue;
       }
       const victim = state.players[s.victimUserId];
-      if (!victim || !victim.isAlive) continue;
+      if (!victim?.isAlive) continue;
       victim.hp = 0;
       victim.isAlive = false;
       victim.isWatching = true;
@@ -3554,7 +3552,7 @@ function drainScheduledEffects(
         continue;
       }
       const victim = state.players[s.userId];
-      if (!victim || !victim.isAlive) continue;
+      if (!victim?.isAlive) continue;
       victim.hp = 0;
       victim.isAlive = false;
       victim.isWatching = true;
@@ -3626,7 +3624,7 @@ function drainScheduledEffects(
         continue;
       }
       const target = state.players[s.userId];
-      if (!target || !target.isAlive) continue;
+      if (!target?.isAlive) continue;
       target.roleId = 'zombie';
       broadcastAnnouncement(dispatcher, {
         kind: 'mode_event',
@@ -3652,7 +3650,7 @@ function reapStaleDisconnects(
   if (state.phase !== MatchPhase.InGame) return;
   for (const userId in state.players) {
     const p = state.players[userId];
-    if (!p || !p.isAlive) continue;
+    if (!p?.isAlive) continue;
     const at = p.disconnectedAtTick;
     if (at === undefined) continue;
     if (tick - at < RECONNECT_GRACE_TICKS) continue;
@@ -3892,8 +3890,7 @@ function broadcastPlayerMoved(
     : null;
   // Doppelganger weapon-hide: a disguised doppel publishes a null
   // equippedItemId so onlookers don't see a knife in their hand.
-  const isDisguisedDoppel =
-    player.roleId === 'doppelganger' && !!player.roleData?.['disguiseAsUserId'];
+  const isDisguisedDoppel = player.roleId === 'doppelganger' && !!player.roleData?.disguiseAsUserId;
   const payload: S2CPlayerMoved = {
     userId: player.userId,
     x: player.x,
@@ -3901,7 +3898,7 @@ function broadcastPlayerMoved(
     facing: player.facing,
     tickN: tick,
     equippedItemId: isDisguisedDoppel ? null : (equippedInst?.itemId ?? null),
-    equippedItemBloody: !isDisguisedDoppel && equippedInst?.data?.['bloody'] === true,
+    equippedItemBloody: !isDisguisedDoppel && equippedInst?.data?.bloody === true,
     bloody: isDisguisedDoppel ? 0 : (player.bloody ?? 0),
   };
   // Ghost-mode invisibility: when the moved player is a ghost, only the
@@ -3932,7 +3929,7 @@ function recipientsCanSee(state: PyrceMatchState, target: PlayerInGame): nkrunti
 /** True if `viewer` can perceive `target`. Ghost + invisable witch hidden. */
 function canSee(viewer: PlayerInGame | null, target: PlayerInGame): boolean {
   // Witch invisablewalk: timed invisibility; only the witch herself sees.
-  const invUntil = target.roleData?.['invisableUntilTick'] as number | undefined;
+  const invUntil = target.roleData?.invisableUntilTick as number | undefined;
   if (target.roleId === 'witch' && invUntil !== undefined) {
     // Caller passes the current tick implicitly via global state — we
     // can't easily access it here, but the engine clears the flag once
@@ -4160,10 +4157,10 @@ function sendSelfRoleState(
 ): void {
   const payload: S2CSelfRoleState = {};
   if (player.roleId === 'witch') {
-    const used = (player.roleData?.['revives'] as number | undefined) ?? 0;
+    const used = (player.roleData?.revives as number | undefined) ?? 0;
     payload.witchRevivesLeft = Math.max(0, 5 - used);
   } else if (player.roleId === 'vampire') {
-    payload.vampireDrained = (player.roleData?.['drained'] as number | undefined) ?? 0;
+    payload.vampireDrained = (player.roleData?.drained as number | undefined) ?? 0;
   } else {
     return; // no relevant counters for this role
   }

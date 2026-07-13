@@ -100,9 +100,7 @@ export class Lighting extends Scene {
 
     const inv = this.cfg.inventory();
     const radialRadius = computeLightRadius(inv);
-    const flashlightOn = inv.items.some(
-      (it) => it.itemId === 'flashlight' && it.data?.['on'] === true,
-    );
+    const flashlightOn = inv.items.some((it) => it.itemId === 'flashlight' && it.data?.on === true);
 
     const self = this.cfg.selfRect();
     if (self) {

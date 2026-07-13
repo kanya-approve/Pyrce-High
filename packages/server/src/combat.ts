@@ -120,7 +120,7 @@ export function resolveAttack(
   // glasses-off check reads `glasses_case`'s instance-data `on=false`.
   if (outcome !== 'miss' && weaponName === 'Nanatsu-Yoru' && attacker.roleId === 'vampire') {
     const glasses = attacker.inventory.items.find((it) => it.itemId === 'glasses_case');
-    const glassesOff = glasses?.data?.['on'] === false;
+    const glassesOff = glasses?.data?.on === false;
     if (glassesOff) {
       if (Math.floor(Math.random() * 100) === 0) {
         dmg = 999;
@@ -202,7 +202,7 @@ export function resolveAttack(
 export function regenStamina(state: PyrceMatchState): void {
   for (const userId in state.players) {
     const p = state.players[userId];
-    if (!p || !p.isAlive) continue;
+    if (!p?.isAlive) continue;
     if (p.stamina < p.maxStamina) {
       p.stamina = Math.min(p.maxStamina, p.stamina + 1);
     }
@@ -222,7 +222,7 @@ export function checkBodyDiscoveries(state: PyrceMatchState): Corpse[] {
     if (!c || c.discovered) continue;
     for (const uid in state.players) {
       const p = state.players[uid];
-      if (!p || !p.isAlive) continue;
+      if (!p?.isAlive) continue;
       if (p.userId === c.killerUserId) continue;
       const d = Math.max(Math.abs(p.x - c.x), Math.abs(p.y - c.y));
       if (d <= 1) {
